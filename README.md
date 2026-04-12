@@ -107,6 +107,42 @@ The workflow currently verifies:
 
 This gives the project a usable CI gate for branch-based delivery, so `dev` can feed `main` through verified pull requests.
 
+GitHub Actions also now runs a release workflow from [.github/workflows/release.yml](/mnt/e/Alixa/MyVapp.io/.github/workflows/release.yml:1).
+
+It runs when a semantic version tag such as `v0.1.1` is pushed. The release workflow:
+
+- installs dependencies
+- runs API tests
+- builds the frontend
+- pushes the Prisma schema to Postgres
+- seeds demo data
+- runs the smoke flow
+- publishes a GitHub release with generated notes and bundled API/web build artifacts
+
+### Release process
+
+For the current setup, release from `main` after CI is green:
+
+```bash
+git checkout main
+git pull origin main
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+That tag push triggers the release workflow automatically.
+
+### Branch protection note
+
+I attempted to enable GitHub branch protection for `main`, but GitHub rejected it for this private repository with:
+
+`Upgrade to GitHub Pro or make this repository public to enable this feature.`
+
+So the repo now has CI and automated releases in place, but required status checks on `main` will need either:
+
+- a public repository, or
+- a GitHub plan that supports branch protection on private repositories
+
 ## Environment setup
 
 1. Copy the env template:
@@ -395,10 +431,10 @@ The current Docker setup is designed to be a strong starter:
 
 1. Add update and delete flows for organizations, elections, offices, and candidates.
 2. Add office rules for multi-seat positions and abstentions.
-3. Add organization admin invites and richer organization-scoped roles.
-4. Replace `prisma db push` in production with formal Prisma migrations.
-5. Add integration tests for auth, election management, and ballot submission endpoints.
-6. Add CI to lint, build, and validate the Prisma schema on every push.
+3. Replace `prisma db push` in production with formal Prisma migrations.
+4. Add integration tests for auth, election management, and ballot submission endpoints.
+5. Add linting and code-style checks to CI.
+6. Add deployment workflows for the API, frontend, and database migrations.
 
 ## Architecture doc
 
