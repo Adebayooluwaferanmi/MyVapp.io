@@ -431,10 +431,10 @@ The current Docker setup is designed to be a strong starter:
 
 1. Add update and delete flows for organizations, elections, offices, and candidates.
 2. Add office rules for multi-seat positions and abstentions.
-3. Replace `prisma db push` in production with formal Prisma migrations.
-4. Add integration tests for auth, election management, and ballot submission endpoints.
-5. Add linting and code-style checks to CI.
-6. Add deployment workflows for the API, frontend, and database migrations.
+3. Add organization admin invites and richer organization-scoped roles.
+4. Replace `prisma db push` in production with formal Prisma migrations.
+5. Add integration tests for auth, election management, and ballot submission endpoints.
+6. Add CI to lint, build, and validate the Prisma schema on every push.
 
 ## Architecture doc
 
