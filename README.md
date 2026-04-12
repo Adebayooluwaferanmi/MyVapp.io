@@ -87,6 +87,26 @@ Development is now intended to happen on `dev`.
 
 If you want the default branch renamed from `main` to `master`, we can do that explicitly later, but the current repo branch is `main`.
 
+## CI/CD
+
+GitHub Actions now runs a CI workflow from [.github/workflows/ci.yml](/mnt/e/Alixa/MyVapp.io/.github/workflows/ci.yml:1).
+
+It runs on:
+
+- pull requests into `main`
+- pushes to `dev`
+- pushes to `main`
+
+The workflow currently verifies:
+
+- API unit tests
+- API TypeScript build
+- frontend production build
+- Prisma schema push against a Postgres service
+- seeded smoke flow against the built API
+
+This gives the project a usable CI gate for branch-based delivery, so `dev` can feed `main` through verified pull requests.
+
 ## Environment setup
 
 1. Copy the env template:
