@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - dev
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  backend:
+    name: Backend Tests and Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm --workspace @myvapp/api run prisma:generate
+
+      - name: Run API tests
+        run: npm --workspace @myvapp/api run test
+
+      - name: Build API
+        run: npm --workspace @myvapp/api run build
+
+  frontend:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm --workspace @myvapp/web run build
+
+  smoke:
+    name: Smoke Test with Postgres
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: myvapp_ci
+          POSTGRES_USER: myvapp_user
+          POSTGRES_PASSWORD: change_me
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U myvapp_user -d myvapp_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://myvapp_user:change_me@127.0.0.1:5432/myvapp_ci?schema=public
+      JWT_SECRET: replace_this_with_a_long_random_secret_at_least_32_characters
+      CLIENT_URL: http://localhost:8080
+      CORS_ORIGIN: http://localhost:8080
+      BCRYPT_SALT_ROUNDS: "12"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm --workspace @myvapp/api run prisma:generate
+
+      - name: Push schema to Postgres
+        run: ./node_modules/.bin/prisma db push --schema apps/api/prisma/schema.prisma
+
+      - name: Seed demo data
+        run: npm --workspace @myvapp/api run db:seed
+        env:
+          SEED_ADMIN_EMAIL: admin@myvapp.local
+          SEED_ADMIN_PASSWORD: ChangeMe123!
+          SEED_MANAGER_EMAIL: manager@myvapp.local
+          SEED_MANAGER_PASSWORD: ChangeMe123!
+          SEED_VOTER_EMAIL: voter1@myvapp.local
+          SEED_VOTER_PASSWORD: ChangeMe123!
+          SEED_ORGANIZATION_NAME: MyVapp Demo Council
+
+      - name: Build API
+        run: npm --workspace @myvapp/api run build
+
+      - name: Run smoke flow
+        run: npm --workspace @myvapp/api run smoke
