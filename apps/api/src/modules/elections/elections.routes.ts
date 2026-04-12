@@ -1,0 +1,39 @@
+import { Router } from "express";
+
+import { ballotsRouter } from "../ballots/ballots.routes";
+import { requireOrganizationManager } from "../../middlewares/organization.middleware";
+import {
+  createCandidateForOffice,
+  createElectionForOrganization,
+  createOfficeForElection,
+  getElection,
+  listCandidates,
+  listElections,
+  listOffices,
+  updateElectionStatusForOrganization
+} from "./elections.controller";
+
+const electionsRouter = Router({ mergeParams: true });
+
+electionsRouter.get("/", listElections);
+electionsRouter.post("/", requireOrganizationManager, createElectionForOrganization);
+
+electionsRouter.get("/:electionId", getElection);
+electionsRouter.patch(
+  "/:electionId/status",
+  requireOrganizationManager,
+  updateElectionStatusForOrganization
+);
+electionsRouter.use("/:electionId", ballotsRouter);
+
+electionsRouter.get("/:electionId/offices", listOffices);
+electionsRouter.post("/:electionId/offices", requireOrganizationManager, createOfficeForElection);
+
+electionsRouter.get("/:electionId/offices/:officeId/candidates", listCandidates);
+electionsRouter.post(
+  "/:electionId/offices/:officeId/candidates",
+  requireOrganizationManager,
+  createCandidateForOffice
+);
+
+export { electionsRouter };

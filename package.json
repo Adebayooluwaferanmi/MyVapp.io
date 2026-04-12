@@ -1,0 +1,16 @@
+{
+  "name": "myvapp",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "db:setup": "npm --workspace @myvapp/api run prisma:generate && npm --workspace @myvapp/api run db:push && npm --workspace @myvapp/api run db:seed",
+    "dev:api": "npm --workspace @myvapp/api run dev",
+    "dev:web": "npm --workspace @myvapp/web run dev",
+    "test": "npm --workspace @myvapp/api run test"
+  }
+}
