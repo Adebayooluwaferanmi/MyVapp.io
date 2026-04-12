@@ -240,7 +240,15 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     };
   }, [candidateCount, electionDetail, elections.length, organizations.length, results]);
 
-  const workflowCards = useMemo(() => {
+  const workflowCards = useMemo<
+    Array<{
+      section: WorkspaceSection;
+      tone: WorkflowTone;
+      meta: string;
+      description: string;
+      disabled: boolean;
+    }>
+  >(() => {
     const selectedElectionLabel = electionDetail?.title ?? "No election selected";
 
     return [
