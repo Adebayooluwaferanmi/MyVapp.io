@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 
+import { getRequestAuditContext } from "../../lib/request-audit";
 import {
   createCandidateSchema,
   createElectionSchema,
@@ -35,7 +36,12 @@ export async function createElectionForOrganization(
 ): Promise<void> {
   const { organizationId } = organizationParamsSchema.parse(request.params);
   const payload = createElectionSchema.parse(request.body);
-  const election = await createElection(organizationId, payload);
+  const election = await createElection(
+    organizationId,
+    payload,
+    request.user!.sub,
+    getRequestAuditContext(request)
+  );
 
   response.status(201).json({
     message: "Election created successfully.",
@@ -58,7 +64,13 @@ export async function updateElectionStatusForOrganization(
 ): Promise<void> {
   const { organizationId, electionId } = electionParamsSchema.parse(request.params);
   const payload = updateElectionStatusSchema.parse(request.body);
-  const election = await updateElectionStatus(organizationId, electionId, payload);
+  const election = await updateElectionStatus(
+    organizationId,
+    electionId,
+    payload,
+    request.user!.sub,
+    getRequestAuditContext(request)
+  );
 
   response.status(200).json({
     message: "Election status updated successfully.",
@@ -81,7 +93,13 @@ export async function createOfficeForElection(
 ): Promise<void> {
   const { organizationId, electionId } = electionParamsSchema.parse(request.params);
   const payload = createOfficeSchema.parse(request.body);
-  const office = await createOffice(organizationId, electionId, payload);
+  const office = await createOffice(
+    organizationId,
+    electionId,
+    payload,
+    request.user!.sub,
+    getRequestAuditContext(request)
+  );
 
   response.status(201).json({
     message: "Office created successfully.",
@@ -104,7 +122,14 @@ export async function createCandidateForOffice(
 ): Promise<void> {
   const { organizationId, electionId, officeId } = officeParamsSchema.parse(request.params);
   const payload = createCandidateSchema.parse(request.body);
-  const candidate = await createCandidate(organizationId, electionId, officeId, payload);
+  const candidate = await createCandidate(
+    organizationId,
+    electionId,
+    officeId,
+    payload,
+    request.user!.sub,
+    getRequestAuditContext(request)
+  );
 
   response.status(201).json({
     message: "Candidate created successfully.",

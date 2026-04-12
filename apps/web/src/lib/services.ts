@@ -1,5 +1,6 @@
 import { apiRequest } from "./api";
 import type {
+  AuditLog,
   AuthResponse,
   BallotState,
   CurrentUser,
@@ -77,6 +78,15 @@ export function listOrganizationMembers(token: string, organizationId: string) {
   return apiRequest<{ members: OrganizationMember[] }>(`/organizations/${organizationId}/members`, {
     token
   });
+}
+
+export function listOrganizationAuditLogs(token: string, organizationId: string, limit = 25) {
+  return apiRequest<{ auditLogs: AuditLog[] }>(
+    `/organizations/${organizationId}/audit-logs?limit=${limit}`,
+    {
+      token
+    }
+  );
 }
 
 export function createOrganizationMember(

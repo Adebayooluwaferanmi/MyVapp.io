@@ -155,6 +155,10 @@ cp .env.example .env
 
 - `POSTGRES_PASSWORD`
 - `JWT_SECRET`
+- `AUTH_RATE_LIMIT_WINDOW_MS`
+- `AUTH_RATE_LIMIT_MAX`
+- `BALLOT_RATE_LIMIT_WINDOW_MS`
+- `BALLOT_RATE_LIMIT_MAX`
 - `SEED_ADMIN_PASSWORD`
 - `CLIENT_URL`
 - `CORS_ORIGIN`
@@ -246,6 +250,27 @@ Ballot access is now restricted to eligible members only. A user must belong to 
 - `ADMIN`
 - `VOTER`
 
+## Audit and security layer
+
+The platform now includes a first security-hardening slice:
+
+- in-memory rate limiting for `register`, `login`, and ballot-access endpoints
+- persisted audit logs for:
+  - organization creation
+  - member invite/add
+  - member role updates
+  - election creation
+  - election status changes
+  - office creation
+  - candidate creation
+  - ballot submission
+- manager-only audit log access per organization
+
+Important privacy rule:
+
+- ballot audit logs intentionally do not store the voter’s candidate selections
+- only submission metadata such as election ID and selection count is recorded
+
 ## Live smoke test
 
 For a real database-backed verification run, use Postgres in Docker and the API smoke script:
@@ -328,6 +353,7 @@ The frontend is now a real working workspace rather than only a login page. It c
 - `GET /api/v1/organizations/:organizationId/members`
 - `POST /api/v1/organizations/:organizationId/members`
 - `PATCH /api/v1/organizations/:organizationId/members/:memberId`
+- `GET /api/v1/organizations/:organizationId/audit-logs`
 - `GET /api/v1/organizations/:organizationId/elections`
 - `POST /api/v1/organizations/:organizationId/elections`
 - `GET /api/v1/organizations/:organizationId/elections/:electionId`

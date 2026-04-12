@@ -47,6 +47,24 @@ export type OrganizationMember = {
   };
 };
 
+export type AuditLog = {
+  id: string;
+  action: string;
+  targetType: string;
+  targetId: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  actor: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    role: string;
+  };
+};
+
 export type Candidate = {
   id: string;
   displayName: string;

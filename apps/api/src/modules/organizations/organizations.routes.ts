@@ -5,6 +5,7 @@ import {
   requireOrganizationManager,
   requireOrganizationMember
 } from "../../middlewares/organization.middleware";
+import { getOrganizationAuditLogs } from "../audit/audit.controller";
 import { electionsRouter } from "../elections/elections.routes";
 import {
   createOrganization,
@@ -42,6 +43,12 @@ organizationsRouter.patch(
   requireOrganizationMember,
   requireOrganizationManager,
   patchOrganizationMemberRole
+);
+organizationsRouter.get(
+  "/:organizationId/audit-logs",
+  requireOrganizationMember,
+  requireOrganizationManager,
+  getOrganizationAuditLogs
 );
 
 export { organizationsRouter };

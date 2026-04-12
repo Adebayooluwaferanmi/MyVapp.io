@@ -63,6 +63,32 @@ function EmptyState({
   );
 }
 
+function FlowStep({
+  isActive,
+  isComplete,
+  label,
+  meta
+}: {
+  isActive: boolean;
+  isComplete: boolean;
+  label: string;
+  meta: string;
+}) {
+  const stateClass = isComplete ? "complete" : isActive ? "active" : "pending";
+
+  return (
+    <article className={`voter-step voter-step--${stateClass}`}>
+      <span className="voter-step__marker" aria-hidden>
+        {isComplete ? "✓" : "•"}
+      </span>
+      <div>
+        <p className="voter-step__label">{label}</p>
+        <strong>{meta}</strong>
+      </div>
+    </article>
+  );
+}
+
 export function VoterPortal({
   healthMessage,
   onLogout,
@@ -103,7 +129,26 @@ export function VoterPortal({
 
   const totalOffices = ballotState?.offices.length ?? 0;
   const selectedCount = Object.values(ballotSelections).filter(Boolean).length;
+  const completionPercent = totalOffices === 0 ? 0 : Math.round((selectedCount / totalOffices) * 100);
   const hasSubmittedBallot = Boolean(ballotState?.ballot);
+  const ballotIsOpen = ballotState?.election.status === "OPEN";
+
+  const reviewItems = useMemo(() => {
+    if (!ballotState) {
+      return [];
+    }
+
+    return ballotState.offices.map((office) => {
+      const selectedCandidateId = ballotSelections[office.id];
+      const selectedCandidate = office.candidates.find((candidate) => candidate.id === selectedCandidateId);
+
+      return {
+        officeId: office.id,
+        officeTitle: office.title,
+        candidateName: selectedCandidate?.displayName ?? null
+      };
+    });
+  }, [ballotSelections, ballotState]);
 
   useEffect(() => {
     void loadOrganizations();
@@ -280,30 +325,74 @@ export function VoterPortal({
 
   return (
     <section className="voter-shell">
-      <header className="panel voter-hero">
+      <header className="panel voter-hero voter-hero--revamped">
         <div>
           <p className="eyebrow">Voter portal</p>
-          <h1>Welcome, {session.user.firstName}. Your next ballot is ready when you are.</h1>
+          <h1>Review the ballot, make your selections, and submit once with confidence.</h1>
           <p className="lead voter-hero__lead">
-            This view is designed for voters first: choose your organization, open the active election,
-            make one choice per office, and submit with confidence.
+            This experience follows a familiar election flow: choose the right organization, open the
+            active election, review candidates office by office, and confirm your ballot in one clear
+            place.
           </p>
           <div className="status-strip">
             <span>{healthMessage}</span>
             <span>{openElections.length} open election{openElections.length === 1 ? "" : "s"}</span>
-            <span>{hasSubmittedBallot ? "Ballot submitted" : "Ballot pending"}</span>
+            <span>{hasSubmittedBallot ? "Submission recorded" : "Submission pending"}</span>
           </div>
         </div>
 
-        <div className="dashboard-actions">
-          <button className="secondary-button" onClick={() => void onRefreshProfile()} type="button">
-            Refresh profile
-          </button>
-          <button className="primary-button" onClick={onLogout} type="button">
-            Logout
-          </button>
+        <div className="voter-trust-panel">
+          <div>
+            <span className="detail-label">Election status</span>
+            <strong>{selectedElection ? toTitleCase(selectedElection.status) : "Awaiting selection"}</strong>
+          </div>
+          <div>
+            <span className="detail-label">One ballot rule</span>
+            <strong>Each voter submits once per election</strong>
+          </div>
+          <div>
+            <span className="detail-label">Audit posture</span>
+            <strong>Submission is tracked without exposing vote choices</strong>
+          </div>
+          <div className="dashboard-actions">
+            <button className="secondary-button" onClick={() => void onRefreshProfile()} type="button">
+              Refresh profile
+            </button>
+            <button className="primary-button" onClick={onLogout} type="button">
+              Logout
+            </button>
+          </div>
         </div>
       </header>
+
+      <section className="panel voter-flow-strip" aria-label="Voting steps">
+        <div className="voter-flow-grid">
+          <FlowStep
+            isActive={!selectedOrganization}
+            isComplete={Boolean(selectedOrganization)}
+            label="Step 1"
+            meta={selectedOrganization ? selectedOrganization.name : "Choose organization"}
+          />
+          <FlowStep
+            isActive={Boolean(selectedOrganization) && !selectedElection}
+            isComplete={Boolean(selectedElection)}
+            label="Step 2"
+            meta={selectedElection ? selectedElection.title : "Open election"}
+          />
+          <FlowStep
+            isActive={Boolean(selectedElection) && !hasSubmittedBallot}
+            isComplete={selectedCount > 0 || hasSubmittedBallot}
+            label="Step 3"
+            meta={`${selectedCount}/${totalOffices} offices reviewed`}
+          />
+          <FlowStep
+            isActive={Boolean(selectedElection) && !hasSubmittedBallot}
+            isComplete={hasSubmittedBallot}
+            label="Step 4"
+            meta={hasSubmittedBallot ? "Ballot submitted" : "Confirm and submit"}
+          />
+        </div>
+      </section>
 
       {notice ? <div className={`notice notice--${notice.tone}`}>{notice.text}</div> : null}
 
@@ -311,7 +400,9 @@ export function VoterPortal({
         <aside className="voter-sidebar">
           <section className="panel voter-summary-card">
             <p className="eyebrow">Your access</p>
-            <h2>{session.user.firstName} {session.user.lastName}</h2>
+            <h2>
+              {session.user.firstName} {session.user.lastName}
+            </h2>
             <p className="muted">{session.user.email}</p>
             <div className="voter-summary-card__stats">
               <div>
@@ -443,20 +534,22 @@ export function VoterPortal({
                   <div className="voter-brief-card__meta">
                     <StatusPill status={selectedElection.status} />
                     <span>{selectedElection._count?.offices ?? 0} offices</span>
-                    <span>{selectedElection._count?.ballots ?? 0} ballots submitted</span>
+                    <span>Starts {formatDateTime(selectedElection.startsAt)}</span>
+                    <span>Ends {formatDateTime(selectedElection.endsAt)}</span>
                   </div>
                 </article>
 
                 <article className="panel voter-brief-card voter-brief-card--accent">
-                  <p className="eyebrow">Voting progress</p>
-                  <h3>
-                    {selectedCount}/{totalOffices} offices selected
-                  </h3>
+                  <p className="eyebrow">Ballot progress</p>
+                  <h3>{completionPercent}% complete</h3>
+                  <div className="voter-progress-meter" aria-hidden>
+                    <div className="voter-progress-meter__fill" style={{ width: `${completionPercent}%` }} />
+                  </div>
                   <p className="muted">
                     {hasSubmittedBallot
                       ? "Your ballot is locked in for this election."
-                      : selectedElection.status === "OPEN"
-                        ? "Complete every office you care about, then submit once."
+                      : ballotIsOpen
+                        ? "Review each office carefully. You can submit only once."
                         : "Voting opens only when the election status is OPEN."}
                   </p>
                 </article>
@@ -465,10 +558,10 @@ export function VoterPortal({
               <section className="panel voter-ballot-stage">
                 <div className="panel-header">
                   <div>
-                    <p className="eyebrow">Ballot</p>
+                    <p className="eyebrow">Ballot review</p>
                     <h2>{selectedElection.title}</h2>
                     <p className="muted">
-                      {selectedOrganization.name} · Starts {formatDateTime(selectedElection.startsAt)} · Ends {formatDateTime(selectedElection.endsAt)}
+                      {selectedOrganization.name} · Review candidates office by office before you submit.
                     </p>
                   </div>
                   <StatusPill status={selectedElection.status} />
@@ -481,89 +574,124 @@ export function VoterPortal({
                 ) : ballotState.offices.length === 0 ? (
                   <p className="muted">This election has no offices yet, so there is no ballot to cast.</p>
                 ) : (
-                  <form className="stack-form" onSubmit={handleSubmitBallot}>
-                    <div className="voter-ballot-grid">
-                      {ballotState.offices.map((office) => (
-                        <article className="voter-office-card" key={office.id}>
-                          <div className="office-card__header">
-                            <div>
-                              <h3>{office.title}</h3>
-                              <p>{office.description ?? "No office description provided."}</p>
-                            </div>
-                            <span className="seat-count">{office.seats} seat{office.seats === 1 ? "" : "s"}</span>
-                          </div>
-
-                          <label className="voter-office-card__field">
-                            <span className="detail-label">Choose candidate</span>
-                            <select
-                              disabled={hasSubmittedBallot || ballotState.election.status !== "OPEN"}
-                              value={ballotSelections[office.id] ?? ""}
-                              onChange={(event) =>
-                                setBallotSelections((current) => ({
-                                  ...current,
-                                  [office.id]: event.target.value
-                                }))
-                              }
-                            >
-                              <option value="">Choose a candidate</option>
-                              {office.candidates.map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>
-                                  {candidate.displayName}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-
-                          <div className="candidate-stack">
-                            {office.candidates.map((candidate) => (
-                              <div
-                                className={
-                                  ballotSelections[office.id] === candidate.id
-                                    ? "candidate-item candidate-item--selected"
-                                    : "candidate-item"
-                                }
-                                key={candidate.id}
-                              >
-                                <strong>{candidate.displayName}</strong>
-                                <p>{candidate.bio ?? "No candidate bio supplied."}</p>
+                  <form className="stack-form voter-ballot-form" onSubmit={handleSubmitBallot}>
+                    <div className="voter-ballot-shell">
+                      <div className="voter-ballot-grid">
+                        {ballotState.offices.map((office) => (
+                          <fieldset className="voter-office-card" key={office.id}>
+                            <legend className="sr-only">{office.title}</legend>
+                            <div className="office-card__header">
+                              <div>
+                                <h3>{office.title}</h3>
+                                <p>{office.description ?? "No office description provided."}</p>
                               </div>
-                            ))}
-                          </div>
-                        </article>
-                      ))}
-                    </div>
+                              <span className="seat-count">{office.seats} seat{office.seats === 1 ? "" : "s"}</span>
+                            </div>
 
-                    <div className="voter-submit-bar">
-                      <div>
-                        <strong>
-                          {hasSubmittedBallot
-                            ? "Ballot already submitted"
-                            : ballotState.election.status === "OPEN"
-                              ? "Ready to submit"
-                              : "Voting is currently closed"}
-                        </strong>
-                        <p className="muted">
-                          {hasSubmittedBallot
-                            ? "Your selections have been recorded for this election."
-                            : "You can submit once. Review your selections before confirming."}
-                        </p>
+                            <div className="candidate-choice-grid">
+                              {office.candidates.map((candidate) => {
+                                const isSelected = ballotSelections[office.id] === candidate.id;
+
+                                return (
+                                  <label
+                                    className={isSelected ? "candidate-choice candidate-choice--selected" : "candidate-choice"}
+                                    key={candidate.id}
+                                  >
+                                    <input
+                                      checked={isSelected}
+                                      className="candidate-choice__input"
+                                      disabled={hasSubmittedBallot || !ballotIsOpen}
+                                      name={`office-${office.id}`}
+                                      onChange={() =>
+                                        setBallotSelections((current) => ({
+                                          ...current,
+                                          [office.id]: candidate.id
+                                        }))
+                                      }
+                                      type="radio"
+                                      value={candidate.id}
+                                    />
+                                    <div className="candidate-choice__card">
+                                      <div className="candidate-choice__header">
+                                        <strong>{candidate.displayName}</strong>
+                                        {isSelected ? <span className="candidate-choice__tag">Selected</span> : null}
+                                      </div>
+                                      <p>{candidate.bio ?? "No candidate bio supplied."}</p>
+                                    </div>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </fieldset>
+                        ))}
                       </div>
 
-                      <button
-                        className="primary-button"
-                        disabled={
-                          activeAction === "submit-ballot" ||
-                          hasSubmittedBallot ||
-                          ballotState.election.status !== "OPEN"
-                        }
-                        type="submit"
-                      >
-                        {hasSubmittedBallot
-                          ? "Ballot submitted"
-                          : activeAction === "submit-ballot"
-                            ? "Submitting..."
-                            : "Submit ballot"}
-                      </button>
+                      <aside className="panel voter-review-card">
+                        <p className="eyebrow">Review panel</p>
+                        <h3>Before you submit</h3>
+                        <div className="voter-review-card__stats">
+                          <div>
+                            <span className="detail-label">Completed</span>
+                            <strong>
+                              {selectedCount}/{totalOffices}
+                            </strong>
+                          </div>
+                          <div>
+                            <span className="detail-label">Election state</span>
+                            <strong>{toTitleCase(ballotState.election.status)}</strong>
+                          </div>
+                        </div>
+
+                        <div className="voter-progress-meter" aria-hidden>
+                          <div className="voter-progress-meter__fill" style={{ width: `${completionPercent}%` }} />
+                        </div>
+
+                        <div className="voter-review-list">
+                          {reviewItems.map((item) => (
+                            <div className="voter-review-list__item" key={item.officeId}>
+                              <span>{item.officeTitle}</span>
+                              <strong>{item.candidateName ?? "Pending selection"}</strong>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="voter-trust-checklist">
+                          <div>
+                            <strong>Clear instructions</strong>
+                            <p>One candidate per office in this current ballot flow.</p>
+                          </div>
+                          <div>
+                            <strong>Transparent status</strong>
+                            <p>Start and end times are always visible before submission.</p>
+                          </div>
+                          <div>
+                            <strong>Submission certainty</strong>
+                            <p>You will see a confirmed submitted state after your ballot is recorded.</p>
+                          </div>
+                        </div>
+
+                        <button
+                          className="primary-button voter-review-card__button"
+                          disabled={
+                            activeAction === "submit-ballot" ||
+                            hasSubmittedBallot ||
+                            ballotState.election.status !== "OPEN"
+                          }
+                          type="submit"
+                        >
+                          {hasSubmittedBallot
+                            ? "Ballot submitted"
+                            : activeAction === "submit-ballot"
+                              ? "Submitting..."
+                              : "Review and submit ballot"}
+                        </button>
+
+                        <p className="muted voter-review-card__footnote">
+                          {hasSubmittedBallot
+                            ? "Your ballot has been recorded for this election."
+                            : "Take a final look at the review list before confirming your submission."}
+                        </p>
+                      </aside>
                     </div>
                   </form>
                 )}

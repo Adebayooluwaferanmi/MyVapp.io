@@ -52,8 +52,8 @@ function SiteHeader({ healthMessage, showMarketingNav = true }: SiteHeaderProps)
 
         {showMarketingNav ? (
           <nav className="site-nav" aria-label="Sections">
-            <a href="#pillars">Platform</a>
-            <a href="#capabilities">Capabilities</a>
+            <a href="#principles">Principles</a>
+            <a href="#flow">Flow</a>
             <a href="#access">Access</a>
           </nav>
         ) : (
@@ -166,64 +166,94 @@ export default function App() {
         <section className="hero panel hero-panel" id="overview">
           <div className="hero-layout">
             <div className="hero-copy">
-              <p className="landing-section-title">Enterprise-ready voting</p>
-              <h1>Run secure, auditable elections your members can trust.</h1>
+              <p className="landing-section-title">Research-informed voting interface</p>
+              <h1>A voting app should feel calm, clear, and trustworthy from the first screen.</h1>
               <p className="lead">
-                MyVapp connects your React workspace to a hardened API and PostgreSQL data layer:
-                organizations, elections, offices, ballots, and role-aware results in one coherent
-                flow.
+                MyVapp now centers the patterns that show up again and again in strong election
+                interfaces: simple hierarchy, clear progress, visible status windows, and a review
+                step that helps voters confirm intent before they cast a ballot.
               </p>
               <div className="status-strip">
                 <span>{healthMessage}</span>
-                <span>React · TypeScript · Vite</span>
-                <span>REST API · Prisma · PostgreSQL</span>
+                <span>Readable ballot flow</span>
+                <span>Manager workspace with clearer stages</span>
               </div>
             </div>
 
-            <div className="hero-grid" aria-label="Highlights">
-              <article className="panel stat-card">
-                <h3>Multi-tenant governance</h3>
-                <p>
-                  Isolate organizations, roles, and ballots so each council or chapter operates with
-                  clear boundaries.
-                </p>
-              </article>
-              <article className="panel stat-card">
-                <h3>Live operational data</h3>
-                <p>
-                  Every dashboard action maps to your API—ready for production traffic and
-                  observability.
-                </p>
-              </article>
-            </div>
+            <aside className="panel launch-checklist" aria-label="Launch checklist">
+              <p className="landing-section-title">What strong voting UIs keep visible</p>
+              <div className="launch-checklist__items">
+                <div>
+                  <strong>Clear progression</strong>
+                  <p>Selection, review, submission, and results each need their own visual stage.</p>
+                </div>
+                <div>
+                  <strong>Trust cues in context</strong>
+                  <p>Status, deadlines, and one-ballot rules should stay near the action.</p>
+                </div>
+                <div>
+                  <strong>Readable choices</strong>
+                  <p>Candidate options should be easy to compare without feeling like raw form controls.</p>
+                </div>
+              </div>
+            </aside>
           </div>
         </section>
 
-        <section className="trust-strip" id="pillars" aria-labelledby="pillars-heading">
+        <section className="trust-strip" id="principles" aria-labelledby="pillars-heading">
           <h2 className="sr-only" id="pillars-heading">
-            Platform pillars
+            Design principles
           </h2>
           <div className="trust-strip__grid">
             <article className="trust-card">
               <div className="trust-card__icon trust-card__icon--blue" aria-hidden>
                 ◆
               </div>
-              <h3>Security by design</h3>
-              <p>JWT authentication, least-privilege roles, and structured validation at the API boundary.</p>
+              <h3>Simple ballot surfaces</h3>
+              <p>Voters should see one office at a time, clear candidate cards, and less visual clutter.</p>
             </article>
             <article className="trust-card">
               <div className="trust-card__icon trust-card__icon--teal" aria-hidden>
                 ◇
               </div>
-              <h3>Operational clarity</h3>
-              <p>Guided setup, election lifecycle controls, and manager-facing tallies without spreadsheets.</p>
+              <h3>Visible status and timing</h3>
+              <p>Election state, start and end windows, and completion progress stay in view while voting.</p>
             </article>
             <article className="trust-card">
               <div className="trust-card__icon trust-card__icon--amber" aria-hidden>
                 ▣
               </div>
-              <h3>Responsive delivery</h3>
-              <p>Column-based layouts that scale from boardroom displays to mobile field voting.</p>
+              <h3>Review before cast</h3>
+              <p>A clear summary panel helps people verify choices before they commit a one-time submission.</p>
+            </article>
+          </div>
+        </section>
+
+        <section className="journey-strip" id="flow">
+          <div className="journey-strip__header">
+            <p className="landing-section-title">How the front end is organized</p>
+            <h2>Built around the natural rhythm of online voting</h2>
+          </div>
+          <div className="journey-strip__grid">
+            <article className="journey-card">
+              <span className="journey-card__step">01</span>
+              <h3>Choose context first</h3>
+              <p>Users select the organization and election before the interface asks them to take action.</p>
+            </article>
+            <article className="journey-card">
+              <span className="journey-card__step">02</span>
+              <h3>Read choices clearly</h3>
+              <p>Each office is separated, candidates are easier to compare, and deadlines stay visible.</p>
+            </article>
+            <article className="journey-card">
+              <span className="journey-card__step">03</span>
+              <h3>Review in one place</h3>
+              <p>A dedicated review panel keeps progress, pending offices, and selected candidates together.</p>
+            </article>
+            <article className="journey-card">
+              <span className="journey-card__step">04</span>
+              <h3>Manage with less clutter</h3>
+              <p>Admins get a more organized lifecycle view for setup, voting, results, and audit activity.</p>
             </article>
           </div>
         </section>
@@ -234,27 +264,27 @@ export default function App() {
           </div>
 
           <section className="panel roadmap-panel" id="capabilities">
-            <p className="landing-section-title">Capabilities</p>
-            <h2>What this workspace delivers today</h2>
+            <p className="landing-section-title">Role-based entry</p>
+            <h2>Designed for both election managers and voters</h2>
             <ul className="feature-list">
               <li>Register and sign in with secured JWT sessions.</li>
-              <li>Create and switch organizations in real time.</li>
-              <li>Manage elections, offices, and candidate profiles.</li>
-              <li>Cast ballots and review role-aware results in one dashboard.</li>
+              <li>Create or switch organizations without losing context.</li>
+              <li>Manage elections through clearer lifecycle stages instead of scattered tools.</li>
+              <li>Cast ballots through candidate cards and a review-first submission flow.</li>
             </ul>
 
             <div className="vision-grid">
               <article className="vision-card">
                 <span className="vision-card__label">Managers</span>
-                <strong>Configure offices, publish elections, and monitor vote totals.</strong>
+                <strong>See the next action, monitor readiness, and manage election status with less noise.</strong>
               </article>
               <article className="vision-card">
                 <span className="vision-card__label">Voters</span>
-                <strong>Access open ballots, vote once per election, and confirm submission state.</strong>
+                <strong>Access open ballots, review each office clearly, and confirm submission with confidence.</strong>
               </article>
               <article className="vision-card">
                 <span className="vision-card__label">Platform</span>
-                <strong>Keep frontend, API, and database behavior aligned in one product flow.</strong>
+                <strong>Keep frontend, API, and data flow aligned around a realistic election journey.</strong>
               </article>
             </div>
           </section>

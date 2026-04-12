@@ -11,6 +11,7 @@ import {
   getElectionDetail,
   getElectionResults,
   listElections,
+  listOrganizationAuditLogs,
   listOrganizationMembers,
   listOrganizations,
   submitBallot,
@@ -18,6 +19,7 @@ import {
   updateElectionStatus
 } from "../lib/services";
 import type {
+  AuditLog,
   BallotState,
   ElectionDetail,
   ElectionSummary,
@@ -44,7 +46,7 @@ type WorkflowTone = "ready" | "attention" | "locked";
 const electionStatuses = ["DRAFT", "SCHEDULED", "OPEN", "CLOSED", "ARCHIVED"] as const;
 const managerRoles = new Set(["OWNER", "ADMIN"]);
 const membershipRoles = ["OWNER", "ADMIN", "MEMBER", "VOTER"] as const;
-const workspaceSections = ["members", "setup", "structure", "vote", "results"] as const;
+const workspaceSections = ["setup", "members", "structure", "vote", "results", "audit"] as const;
 
 type WorkspaceSection = (typeof workspaceSections)[number];
 
@@ -53,7 +55,8 @@ const sectionLabelMap: Record<WorkspaceSection, string> = {
   setup: "Setup",
   structure: "Structure",
   vote: "Vote",
-  results: "Results"
+  results: "Results",
+  audit: "Audit"
 };
 
 const sectionHintMap: Record<WorkspaceSection, string> = {
@@ -61,7 +64,8 @@ const sectionHintMap: Record<WorkspaceSection, string> = {
   setup: "Create and select elections, then set status windows.",
   structure: "Define offices and candidate lists for the selected election.",
   vote: "Cast ballots with one candidate choice per office.",
-  results: "Review manager-facing tally and vote distribution."
+  results: "Review manager-facing tally and vote distribution.",
+  audit: "Inspect recent sensitive actions such as member role changes and ballot submissions."
 };
 
 const initialOrganizationForm = {
@@ -114,6 +118,26 @@ function toTitleCase(value: string): string {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatAuditAction(action: string): string {
+  return action
+    .split(".")
+    .map((part) => toTitleCase(part))
+    .join(" · ");
+}
+
+function formatAuditMetadata(metadata: Record<string, unknown> | null): string {
+  if (!metadata) {
+    return "No additional metadata";
+  }
+
+  const parts = Object.entries(metadata)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .slice(0, 4)
+    .map(([key, value]) => `${toTitleCase(key)}: ${String(value)}`);
+
+  return parts.length > 0 ? parts.join(" · ") : "No additional metadata";
 }
 
 function StatusPill({ status }: { status: string }) {
@@ -181,9 +205,27 @@ function WorkflowCard({
   );
 }
 
+function ReadinessItem({
+  label,
+  meta,
+  tone
+}: {
+  label: string;
+  meta: string;
+  tone: WorkflowTone;
+}) {
+  return (
+    <div className={`readiness-item readiness-item--${tone}`}>
+      <span className="readiness-item__label">{label}</span>
+      <strong>{meta}</strong>
+    </div>
+  );
+}
+
 export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }: WorkspaceProps) {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [members, setMembers] = useState<OrganizationMember[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const [elections, setElections] = useState<ElectionSummary[]>([]);
   const [selectedElectionId, setSelectedElectionId] = useState<string | null>(null);
@@ -204,6 +246,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
   const [ballotSelections, setBallotSelections] = useState<Record<string, string>>({});
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("setup");
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+  const [isLoadingAuditLogs, setIsLoadingAuditLogs] = useState(false);
 
   const selectedOrganization = useMemo(
     () => organizations.find((organization) => organization.id === selectedOrganizationId) ?? null,
@@ -227,6 +270,32 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
   const hasBallotChoices = Boolean(ballotState && ballotState.offices.length > 0);
   const hasSubmittedBallot = Boolean(ballotState?.ballot);
   const hasResults = Boolean(results && results.offices.length > 0);
+  const hasAuditLogs = auditLogs.length > 0;
+  const eligibleVoterCount = useMemo(
+    () => members.filter((member) => member.canVote).length,
+    [members]
+  );
+  const totalBallotOffices = ballotState?.offices.length ?? 0;
+  const selectedBallotCount = Object.values(ballotSelections).filter(Boolean).length;
+  const ballotCompletionPercent =
+    totalBallotOffices === 0 ? 0 : Math.round((selectedBallotCount / totalBallotOffices) * 100);
+
+  const ballotReviewItems = useMemo(() => {
+    if (!ballotState) {
+      return [];
+    }
+
+    return ballotState.offices.map((office) => {
+      const selectedCandidateId = ballotSelections[office.id];
+      const selectedCandidate = office.candidates.find((candidate) => candidate.id === selectedCandidateId);
+
+      return {
+        officeId: office.id,
+        officeTitle: office.title,
+        candidateName: selectedCandidate?.displayName ?? null
+      };
+    });
+  }, [ballotSelections, ballotState]);
 
   const metrics = useMemo(() => {
     const officeCount = electionDetail?.offices.length ?? 0;
@@ -301,14 +370,25 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
           ? "Managers can inspect live or historical tallies for the selected election."
           : "Results are reserved for managers in the selected organization.",
         disabled: !selectedElectionId
+      },
+      {
+        section: "audit" as const,
+        tone: hasAuditLogs ? "ready" : selectedOrganization ? "attention" : "locked",
+        meta: hasAuditLogs ? `${auditLogs.length} recent audit events` : "No recent audit events",
+        description: canManageSelectedOrganization
+          ? "Review security-relevant activity without exposing actual ballot selections."
+          : "Audit visibility is reserved for organization managers.",
+        disabled: !selectedOrganization || !canManageSelectedOrganization
       }
     ];
   }, [
+    auditLogs.length,
     candidateCount,
     canManageSelectedOrganization,
     currentOffices.length,
     electionDetail?.status,
     electionDetail?.title,
+    hasAuditLogs,
     hasBallotChoices,
     hasResults,
     hasSubmittedBallot,
@@ -322,59 +402,76 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     if (!selectedOrganization) {
       return {
         title: "Start by choosing an organization",
-        body: "Create a new organization or select an existing one so the election workspace can load."
+        body: "Create a new organization or select an existing one so the election workspace can load.",
+        section: "setup" as const,
+        actionLabel: "Set up workspace"
       };
     }
 
     if (!selectedElectionId) {
       return {
         title: "Create or select an election",
-        body: "Your next action is to define the election container before you can build a ballot."
+        body: "Your next action is to define the election container before you can build a ballot.",
+        section: "setup" as const,
+        actionLabel: "Create election"
       };
     }
-
-    const eligibleVoterCount = members.filter((member) => member.canVote).length;
 
     if (eligibleVoterCount === 0) {
       return {
         title: "Assign at least one eligible voter",
-        body: "Members with the VOTER, ADMIN, or OWNER role can access ballots. Add or update members first."
+        body: "Members with the VOTER, ADMIN, or OWNER role can access ballots. Add or update members first.",
+        section: "members" as const,
+        actionLabel: "Manage members"
       };
     }
 
     if (currentOffices.length === 0) {
       return {
         title: "Add offices to shape the ballot",
-        body: "Define the positions being contested so candidate entry and voting have a structure."
+        body: "Define the positions being contested so candidate entry and voting have a structure.",
+        section: "structure" as const,
+        actionLabel: "Build the ballot"
       };
     }
 
     if (candidateCount === 0) {
       return {
         title: "Add candidates to each office",
-        body: "The election structure exists, but voters still need candidate options before voting can open."
+        body: "The election structure exists, but voters still need candidate options before voting can open.",
+        section: "structure" as const,
+        actionLabel: "Add candidates"
       };
     }
 
     if (electionDetail?.status !== "OPEN") {
       return {
         title: "Open the election when the ballot is ready",
-        body: "Move the election to OPEN in Setup so members can cast ballots."
+        body: "Move the election to OPEN in Setup so members can cast ballots.",
+        section: "setup" as const,
+        actionLabel: "Review setup"
       };
     }
 
     if (!hasSubmittedBallot) {
       return {
         title: "Voting is live",
-        body: "Switch to Vote to test the ballot experience or ask members to cast ballots."
+        body: "Switch to Vote to test the ballot experience or ask members to cast ballots.",
+        section: "vote" as const,
+        actionLabel: "Open ballot view"
       };
     }
 
     return {
       title: "Review progress and results",
-      body: "The core workflow is active. Use Results to monitor vote distribution and confirm tally health."
+      body: canManageSelectedOrganization
+        ? "The core workflow is active. Use Results and Audit to monitor tally health and sensitive actions."
+        : "The core workflow is active. Use Vote to confirm the ballot journey from a member perspective.",
+      section: canManageSelectedOrganization ? ("results" as const) : ("vote" as const),
+      actionLabel: canManageSelectedOrganization ? "Review results" : "Revisit ballot"
     };
   }, [
+    canManageSelectedOrganization,
     candidateCount,
     currentOffices.length,
     electionDetail?.status,
@@ -384,6 +481,63 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     selectedOrganization
   ]);
 
+  const readinessItems = useMemo(
+    () => [
+      {
+        label: "Access",
+        meta:
+          eligibleVoterCount > 0
+            ? `${eligibleVoterCount} eligible voter${eligibleVoterCount === 1 ? "" : "s"}`
+            : "No eligible voters yet",
+        tone: eligibleVoterCount > 0 ? ("ready" as const) : selectedOrganization ? ("attention" as const) : ("locked" as const)
+      },
+      {
+        label: "Election",
+        meta: selectedElectionId ? electionDetail?.title ?? "Loading election…" : "No election selected",
+        tone: selectedElectionId ? ("ready" as const) : ("attention" as const)
+      },
+      {
+        label: "Ballot",
+        meta:
+          currentOffices.length > 0 && candidateCount > 0
+            ? `${currentOffices.length} offices · ${candidateCount} candidates`
+            : selectedElectionId
+              ? "Ballot still being assembled"
+              : "Locked until election is chosen",
+        tone:
+          currentOffices.length > 0 && candidateCount > 0
+            ? ("ready" as const)
+            : selectedElectionId
+              ? ("attention" as const)
+              : ("locked" as const)
+      },
+      {
+        label: "Voting",
+        meta:
+          electionDetail?.status === "OPEN"
+            ? "Accepting ballots now"
+            : selectedElectionId
+              ? `Status: ${toTitleCase(electionDetail?.status ?? "draft")}`
+              : "Not available yet",
+        tone:
+          electionDetail?.status === "OPEN"
+            ? ("ready" as const)
+            : selectedElectionId
+              ? ("attention" as const)
+              : ("locked" as const)
+      }
+    ],
+    [
+      candidateCount,
+      currentOffices.length,
+      electionDetail?.status,
+      electionDetail?.title,
+      eligibleVoterCount,
+      selectedElectionId,
+      selectedOrganization
+    ]
+  );
+
   useEffect(() => {
     void loadOrganizations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -392,6 +546,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
   useEffect(() => {
     if (!selectedOrganizationId) {
       setMembers([]);
+      setAuditLogs([]);
       setElections([]);
       setSelectedElectionId(null);
       setElectionDetail(null);
@@ -404,8 +559,10 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     void loadElections(selectedOrganizationId);
     if (canManageSelectedOrganization) {
       void loadMembers(selectedOrganizationId);
+      void loadAuditLogs(selectedOrganizationId);
     } else {
       setMembers([]);
+      setAuditLogs([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOrganizationId, session.token, canManageSelectedOrganization]);
@@ -546,6 +703,23 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     }
   }
 
+  async function loadAuditLogs(organizationId: string) {
+    setIsLoadingAuditLogs(true);
+
+    try {
+      const response = await listOrganizationAuditLogs(session.token, organizationId, 25);
+      setAuditLogs(response.auditLogs);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to load audit logs."
+      });
+      setAuditLogs([]);
+    } finally {
+      setIsLoadingAuditLogs(false);
+    }
+  }
+
   async function loadElectionWorkspace(organizationId: string, electionId: string) {
     setIsLoadingElectionWorkspace(true);
 
@@ -629,6 +803,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         text: `Election "${response.election.title}" created successfully.`
       });
       await loadElections(selectedOrganizationId, response.election.id);
+      if (canManageSelectedOrganization) {
+        await loadAuditLogs(selectedOrganizationId);
+      }
     } catch (error) {
       setNotice({
         tone: "error",
@@ -656,6 +833,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
       });
       await loadElections(selectedOrganizationId, selectedElectionId);
       await loadElectionWorkspace(selectedOrganizationId, selectedElectionId);
+      if (canManageSelectedOrganization) {
+        await loadAuditLogs(selectedOrganizationId);
+      }
     } catch (error) {
       setNotice({
         tone: "error",
@@ -686,6 +866,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
       });
       await loadElections(selectedOrganizationId, selectedElectionId);
       await loadElectionWorkspace(selectedOrganizationId, selectedElectionId);
+      if (canManageSelectedOrganization) {
+        await loadAuditLogs(selectedOrganizationId);
+      }
     } catch (error) {
       setNotice({
         tone: "error",
@@ -722,6 +905,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         text: "Candidate created successfully."
       });
       await loadElectionWorkspace(selectedOrganizationId, selectedElectionId);
+      if (canManageSelectedOrganization) {
+        await loadAuditLogs(selectedOrganizationId);
+      }
     } catch (error) {
       setNotice({
         tone: "error",
@@ -753,6 +939,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
           : `${response.member.user.email} was added to the organization successfully.`
       });
       await loadMembers(selectedOrganizationId);
+      await loadAuditLogs(selectedOrganizationId);
       await loadOrganizations(selectedOrganizationId);
     } catch (error) {
       setNotice({
@@ -785,6 +972,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         text: `${response.member.user.email} is now assigned as ${toTitleCase(role)}.`
       });
       await loadMembers(selectedOrganizationId);
+      await loadAuditLogs(selectedOrganizationId);
       await loadOrganizations(selectedOrganizationId);
       await onRefreshProfile();
     } catch (error) {
@@ -830,6 +1018,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         text: "Ballot submitted successfully."
       });
       await loadElectionWorkspace(selectedOrganizationId, selectedElectionId);
+      if (canManageSelectedOrganization) {
+        await loadAuditLogs(selectedOrganizationId);
+      }
     } catch (error) {
       setNotice({
         tone: "error",
@@ -877,12 +1068,17 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
       </section>
 
       <section className="panel workspace-section-nav">
-        <p className="workspace-section-nav__label">Workspace sections</p>
+        <p className="workspace-section-nav__label">Election lifecycle</p>
         <p className="workspace-section-nav__hint">{sectionHintMap[activeSection]}</p>
         <div className="workspace-section-buttons">
           {workspaceSections.map((section) => {
             const isActive = section === activeSection;
-            const isDisabled = section !== "setup" && !hasElectionWorkspace;
+            const isDisabled =
+              section === "setup"
+                ? false
+                : section === "members" || section === "audit"
+                  ? !selectedOrganization
+                  : !hasElectionWorkspace;
 
             return (
               <button
@@ -1007,8 +1203,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
                 </div>
               </section>
 
-              <section className="workspace-story-grid">
-                <article className="panel workflow-spotlight">
+              <section className="workspace-overview-grid">
+                <article className="panel workspace-overview-card workspace-overview-card--lead">
                   <p className="eyebrow">Recommended next step</p>
                   <h3>{recommendedStep.title}</h3>
                   <p className="muted">{recommendedStep.body}</p>
@@ -1022,11 +1218,46 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
                     )}
                     <span>{currentOffices.length} offices configured</span>
                     <span>{candidateCount} candidates loaded</span>
+                    <span>{eligibleVoterCount} eligible voters</span>
+                  </div>
+                  <div className="workspace-overview-card__actions">
+                    <button
+                      className="primary-button"
+                      onClick={() => setActiveSection(recommendedStep.section)}
+                      type="button"
+                    >
+                      {recommendedStep.actionLabel}
+                    </button>
+                    {selectedElectionId ? (
+                      <button
+                        className="secondary-button"
+                        onClick={() => setActiveSection("setup")}
+                        type="button"
+                      >
+                        Review election status
+                      </button>
+                    ) : null}
                   </div>
                 </article>
 
-                <article className="panel election-snapshot">
-                  <p className="eyebrow">Election snapshot</p>
+                <article className="panel workspace-overview-card">
+                  <p className="eyebrow">Readiness check</p>
+                  <h3>What the election needs next</h3>
+                  <div className="workspace-readiness-grid">
+                    {readinessItems.map((item) => (
+                      <ReadinessItem
+                        key={item.label}
+                        label={item.label}
+                        meta={item.meta}
+                        tone={item.tone}
+                      />
+                    ))}
+                  </div>
+                </article>
+
+                <article className="panel workspace-overview-card">
+                  <p className="eyebrow">Trust and timing</p>
+                  <h3>Keep the critical voting signals visible</h3>
                   <div className="election-snapshot__grid">
                     <div>
                       <span className="detail-label">Current status</span>
@@ -1045,6 +1276,14 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
                     <div>
                       <span className="detail-label">Results</span>
                       <strong>{hasResults ? "Tallies available" : "No tallies yet"}</strong>
+                    </div>
+                    <div>
+                      <span className="detail-label">Window</span>
+                      <strong>
+                        {electionDetail
+                          ? `${formatDateTime(electionDetail.startsAt)} → ${formatDateTime(electionDetail.endsAt)}`
+                          : "Not scheduled"}
+                      </strong>
                     </div>
                   </div>
                 </article>
@@ -1496,11 +1735,12 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
                   <section className="panel ballot-panel">
                     <div className="panel-header">
                       <div>
-                        <h2>Ballot</h2>
+                        <p className="eyebrow">Ballot review</p>
+                        <h2>Vote with the same structure voters will see</h2>
                         <p className="muted">
                           {ballotState?.ballot
                             ? "This account has already submitted a ballot."
-                            : "Select one candidate per office and submit when ready."}
+                            : "Move through each office in sequence, review your choices, and submit once."}
                         </p>
                       </div>
                       {ballotState ? <StatusPill status={ballotState.election.status} /> : null}
@@ -1511,45 +1751,161 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
                     ) : ballotState.offices.length === 0 ? (
                       <p className="muted">This election has no offices yet, so there is no ballot to cast.</p>
                     ) : (
-                      <form className="stack-form" onSubmit={handleSubmitBallot}>
-                        {ballotState.offices.map((office) => (
-                          <label key={office.id}>
-                            {office.title}
-                            <select
-                              disabled={Boolean(ballotState.ballot) || ballotState.election.status !== "OPEN"}
-                              value={ballotSelections[office.id] ?? ""}
-                              onChange={(event) =>
-                                setBallotSelections((current) => ({
-                                  ...current,
-                                  [office.id]: event.target.value
-                                }))
-                              }
-                            >
-                              <option value="">Choose a candidate</option>
-                              {office.candidates.map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>
-                                  {candidate.displayName}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        ))}
+                      <form className="stack-form voter-ballot-form" onSubmit={handleSubmitBallot}>
+                        <section className="voter-brief-grid workspace-vote-summary">
+                          <article className="panel voter-brief-card">
+                            <p className="eyebrow">Live ballot summary</p>
+                            <h3>{ballotState.election.title}</h3>
+                            <p className="muted">
+                              {ballotState.election.description ?? "No election description has been provided yet."}
+                            </p>
+                            <div className="voter-brief-card__meta">
+                              <span>Starts {formatDateTime(ballotState.election.startsAt)}</span>
+                              <span>Ends {formatDateTime(ballotState.election.endsAt)}</span>
+                              <span>{ballotState.offices.length} offices</span>
+                            </div>
+                          </article>
 
-                        <button
-                          className="primary-button"
-                          disabled={
-                            activeAction === "submit-ballot" ||
-                            Boolean(ballotState.ballot) ||
-                            ballotState.election.status !== "OPEN"
-                          }
-                          type="submit"
-                        >
-                          {ballotState.ballot
-                            ? "Ballot already submitted"
-                            : activeAction === "submit-ballot"
-                              ? "Submitting..."
-                              : "Submit ballot"}
-                        </button>
+                          <article className="panel voter-brief-card voter-brief-card--accent">
+                            <p className="eyebrow">Progress</p>
+                            <h3>{ballotCompletionPercent}% complete</h3>
+                            <div className="voter-progress-meter" aria-hidden>
+                              <div
+                                className="voter-progress-meter__fill"
+                                style={{ width: `${ballotCompletionPercent}%` }}
+                              />
+                            </div>
+                            <p className="muted">
+                              {ballotState.ballot
+                                ? "The ballot is already locked for this account."
+                                : ballotState.election.status === "OPEN"
+                                  ? "Review every office carefully before you submit."
+                                  : "Voting is disabled until the election status becomes OPEN."}
+                            </p>
+                          </article>
+                        </section>
+
+                        <div className="voter-ballot-shell">
+                          <div className="voter-ballot-grid">
+                            {ballotState.offices.map((office) => (
+                              <fieldset className="voter-office-card" key={office.id}>
+                                <legend className="sr-only">{office.title}</legend>
+                                <div className="office-card__header">
+                                  <div>
+                                    <h3>{office.title}</h3>
+                                    <p>{office.description ?? "No office description provided."}</p>
+                                  </div>
+                                  <span className="seat-count">{office.seats} seat{office.seats === 1 ? "" : "s"}</span>
+                                </div>
+
+                                <div className="candidate-choice-grid">
+                                  {office.candidates.map((candidate) => {
+                                    const isSelected = ballotSelections[office.id] === candidate.id;
+
+                                    return (
+                                      <label
+                                        className={isSelected ? "candidate-choice candidate-choice--selected" : "candidate-choice"}
+                                        key={candidate.id}
+                                      >
+                                        <input
+                                          checked={isSelected}
+                                          className="candidate-choice__input"
+                                          disabled={Boolean(ballotState.ballot) || ballotState.election.status !== "OPEN"}
+                                          name={`workspace-office-${office.id}`}
+                                          onChange={() =>
+                                            setBallotSelections((current) => ({
+                                              ...current,
+                                              [office.id]: candidate.id
+                                            }))
+                                          }
+                                          type="radio"
+                                          value={candidate.id}
+                                        />
+                                        <div className="candidate-choice__card">
+                                          <div className="candidate-choice__header">
+                                            <strong>{candidate.displayName}</strong>
+                                            {isSelected ? <span className="candidate-choice__tag">Selected</span> : null}
+                                          </div>
+                                          <p>{candidate.bio ?? "No candidate bio supplied."}</p>
+                                        </div>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </fieldset>
+                            ))}
+                          </div>
+
+                          <aside className="panel voter-review-card workspace-review-card">
+                            <p className="eyebrow">Review panel</p>
+                            <h3>Before submission</h3>
+                            <div className="voter-review-card__stats">
+                              <div>
+                                <span className="detail-label">Completed</span>
+                                <strong>
+                                  {selectedBallotCount}/{totalBallotOffices}
+                                </strong>
+                              </div>
+                              <div>
+                                <span className="detail-label">Election state</span>
+                                <strong>{toTitleCase(ballotState.election.status)}</strong>
+                              </div>
+                            </div>
+
+                            <div className="voter-progress-meter" aria-hidden>
+                              <div
+                                className="voter-progress-meter__fill"
+                                style={{ width: `${ballotCompletionPercent}%` }}
+                              />
+                            </div>
+
+                            <div className="voter-review-list">
+                              {ballotReviewItems.map((item) => (
+                                <div className="voter-review-list__item" key={item.officeId}>
+                                  <span>{item.officeTitle}</span>
+                                  <strong>{item.candidateName ?? "Pending selection"}</strong>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="voter-trust-checklist">
+                              <div>
+                                <strong>Sequential voting</strong>
+                                <p>Each office stays visually separate so choices are easier to verify.</p>
+                              </div>
+                              <div>
+                                <strong>Visible timing</strong>
+                                <p>The election window stays present while you work through the ballot.</p>
+                              </div>
+                              <div>
+                                <strong>Review before cast</strong>
+                                <p>The full selection list stays together so corrections are obvious before submit.</p>
+                              </div>
+                            </div>
+
+                            <button
+                              className="primary-button voter-review-card__button"
+                              disabled={
+                                activeAction === "submit-ballot" ||
+                                Boolean(ballotState.ballot) ||
+                                ballotState.election.status !== "OPEN"
+                              }
+                              type="submit"
+                            >
+                              {ballotState.ballot
+                                ? "Ballot already submitted"
+                                : activeAction === "submit-ballot"
+                                  ? "Submitting..."
+                                  : "Submit ballot"}
+                            </button>
+
+                            <p className="muted voter-review-card__footnote">
+                              {ballotState.ballot
+                                ? "This ballot has already been recorded for the selected election."
+                                : "Use the review list to make sure every office reflects your intended choice."}
+                            </p>
+                          </aside>
+                        </div>
                       </form>
                     )}
                   </section>
@@ -1621,6 +1977,66 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
                   <EmptyPanel
                     title="No results to display"
                     body="Select an election in Setup to review vote counts and candidate standings."
+                  />
+                )
+              ) : null}
+
+              {activeSection === "audit" ? (
+                selectedOrganization ? (
+                  canManageSelectedOrganization ? (
+                    <section className="panel audit-panel">
+                      <div className="panel-header">
+                        <div>
+                          <h2>Audit log</h2>
+                          <p className="muted">
+                            Recent sensitive actions across the organization. Ballot choices themselves are never stored here.
+                          </p>
+                        </div>
+                        {isLoadingAuditLogs ? <span className="muted">Refreshing...</span> : null}
+                      </div>
+
+                      {auditLogs.length === 0 ? (
+                        <p className="muted">No recent audit events yet.</p>
+                      ) : (
+                        <div className="audit-log-list">
+                          {auditLogs.map((log) => (
+                            <article className="audit-log-card" key={log.id}>
+                              <div className="audit-log-card__header">
+                                <div>
+                                  <span className="eyebrow">#{log.targetType}</span>
+                                  <h3>{formatAuditAction(log.action)}</h3>
+                                </div>
+                                <span className="audit-log-card__time">{formatDateTime(log.createdAt)}</span>
+                              </div>
+
+                              <div className="audit-log-card__meta">
+                                <span>
+                                  Actor:{" "}
+                                  <strong>
+                                    {log.actor.firstName} {log.actor.lastName}
+                                  </strong>
+                                </span>
+                                <span>{log.actor.email}</span>
+                                <span>Role: {toTitleCase(log.actor.role)}</span>
+                                {log.ipAddress ? <span>IP: {log.ipAddress}</span> : null}
+                              </div>
+
+                              <p className="muted">{formatAuditMetadata(log.metadata)}</p>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  ) : (
+                    <EmptyPanel
+                      title="Audit access is restricted"
+                      body="Only organization managers can inspect audit events for security-sensitive actions."
+                    />
+                  )
+                ) : (
+                  <EmptyPanel
+                    title="No organization selected"
+                    body="Choose an organization before viewing its audit activity."
                   />
                 )
               ) : null}

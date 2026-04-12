@@ -5,7 +5,9 @@ import { MembershipRole, UserRole, UserStatus, type Prisma } from "@prisma/clien
 import { AppError } from "../../lib/app-error";
 import { hashPassword } from "../../lib/password";
 import { prisma } from "../../lib/prisma";
+import type { AuditRequestContext } from "../../lib/request-audit";
 import { slugify } from "../../lib/slug";
+import { recordAuditLog } from "../audit/audit.service";
 import type {
   CreateOrganizationInput,
   CreateOrganizationMemberInput,
@@ -97,7 +99,11 @@ export async function getOrganizationById(organizationId: string) {
   return organization;
 }
 
-export async function createOrganizationForUser(userId: string, input: CreateOrganizationInput) {
+export async function createOrganizationForUser(
+  userId: string,
+  input: CreateOrganizationInput,
+  auditContext?: AuditRequestContext
+) {
   const slug = await buildUniqueOrganizationSlug(input.name);
 
   return prisma.$transaction(async (transaction) => {
@@ -124,6 +130,22 @@ export async function createOrganizationForUser(userId: string, input: CreateOrg
     });
 
     await syncUserPlatformRole(userId, transaction);
+    await recordAuditLog(
+      {
+        organizationId: organization.id,
+        actorUserId: userId,
+        action: "organization.created",
+        targetType: "organization",
+        targetId: organization.id,
+        ipAddress: auditContext?.ipAddress,
+        userAgent: auditContext?.userAgent,
+        metadata: {
+          name: organization.name,
+          slug: organization.slug
+        }
+      },
+      transaction
+    );
 
     return organization;
   });
@@ -232,7 +254,9 @@ export async function listOrganizationMembers(organizationId: string) {
 
 export async function addOrganizationMember(
   organizationId: string,
-  input: CreateOrganizationMemberInput
+  input: CreateOrganizationMemberInput,
+  actorUserId: string,
+  auditContext?: AuditRequestContext
 ) {
   const email = input.email.toLowerCase();
 
@@ -302,6 +326,24 @@ export async function addOrganizationMember(
     });
 
     await syncUserPlatformRole(user.id, transaction);
+    await recordAuditLog(
+      {
+        organizationId,
+        actorUserId,
+        action: "organization.member_added",
+        targetType: "organization_member",
+        targetId: membership.id,
+        ipAddress: auditContext?.ipAddress,
+        userAgent: auditContext?.userAgent,
+        metadata: {
+          invited: !existingUser,
+          memberEmail: membership.user.email,
+          memberUserId: membership.user.id,
+          organizationRole: membership.role
+        }
+      },
+      transaction
+    );
 
     return {
       member: mapOrganizationMember(membership),
@@ -314,7 +356,9 @@ export async function addOrganizationMember(
 export async function updateOrganizationMemberRole(
   organizationId: string,
   memberId: string,
-  input: UpdateOrganizationMemberRoleInput
+  input: UpdateOrganizationMemberRoleInput,
+  actorUserId: string,
+  auditContext?: AuditRequestContext
 ) {
   return prisma.$transaction(async (transaction) => {
     const membership = await transaction.organizationMember.findFirst({
@@ -373,6 +417,24 @@ export async function updateOrganizationMemberRole(
     });
 
     await syncUserPlatformRole(updatedMembership.user.id, transaction);
+    await recordAuditLog(
+      {
+        organizationId,
+        actorUserId,
+        action: "organization.member_role_updated",
+        targetType: "organization_member",
+        targetId: updatedMembership.id,
+        ipAddress: auditContext?.ipAddress,
+        userAgent: auditContext?.userAgent,
+        metadata: {
+          memberEmail: updatedMembership.user.email,
+          memberUserId: updatedMembership.user.id,
+          previousRole: membership.role,
+          nextRole: updatedMembership.role
+        }
+      },
+      transaction
+    );
 
     return mapOrganizationMember(updatedMembership);
   });

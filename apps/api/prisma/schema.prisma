@@ -47,6 +47,7 @@ model User {
   updatedAt    DateTime             @updatedAt
   memberships  OrganizationMember[]
   ballots      Ballot[]
+  auditLogs    AuditLog[]
 }
 
 model Organization {
@@ -58,6 +59,7 @@ model Organization {
   updatedAt   DateTime             @updatedAt
   elections   Election[]
   members     OrganizationMember[]
+  auditLogs   AuditLog[]
 }
 
 model OrganizationMember {
@@ -141,4 +143,22 @@ model Vote {
   candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
   @@unique([ballotId, officeId])
+}
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  actorUserId    String
+  action         String
+  targetType     String
+  targetId       String?
+  ipAddress      String?
+  userAgent      String?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  actor          User         @relation(fields: [actorUserId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([actorUserId, createdAt(sort: Desc)])
 }

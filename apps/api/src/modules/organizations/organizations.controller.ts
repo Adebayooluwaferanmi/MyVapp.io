@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 
+import { getRequestAuditContext } from "../../lib/request-audit";
 import {
   createOrganizationMemberSchema,
   createOrganizationSchema,
@@ -35,7 +36,11 @@ export async function getOrganization(request: Request, response: Response): Pro
 
 export async function createOrganization(request: Request, response: Response): Promise<void> {
   const payload = createOrganizationSchema.parse(request.body);
-  const organization = await createOrganizationForUser(request.user!.sub, payload);
+  const organization = await createOrganizationForUser(
+    request.user!.sub,
+    payload,
+    getRequestAuditContext(request)
+  );
 
   response.status(201).json({
     message: "Organization created successfully.",
@@ -55,7 +60,12 @@ export async function getOrganizationMembers(request: Request, response: Respons
 export async function createOrganizationMember(request: Request, response: Response): Promise<void> {
   const { organizationId } = organizationParamsSchema.parse(request.params);
   const payload = createOrganizationMemberSchema.parse(request.body);
-  const result = await addOrganizationMember(organizationId, payload);
+  const result = await addOrganizationMember(
+    organizationId,
+    payload,
+    request.user!.sub,
+    getRequestAuditContext(request)
+  );
 
   response.status(201).json({
     message: result.invited
@@ -70,7 +80,13 @@ export async function createOrganizationMember(request: Request, response: Respo
 export async function patchOrganizationMemberRole(request: Request, response: Response): Promise<void> {
   const { organizationId, memberId } = organizationMemberParamsSchema.parse(request.params);
   const payload = updateOrganizationMemberRoleSchema.parse(request.body);
-  const member = await updateOrganizationMemberRole(organizationId, memberId, payload);
+  const member = await updateOrganizationMemberRole(
+    organizationId,
+    memberId,
+    payload,
+    request.user!.sub,
+    getRequestAuditContext(request)
+  );
 
   response.status(200).json({
     message: "Organization member role updated successfully.",
