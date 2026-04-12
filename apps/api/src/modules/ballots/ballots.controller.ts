@@ -1,0 +1,33 @@
+import type { Request, Response } from "express";
+
+import { electionParamsSchema, submitBallotSchema } from "./ballots.schemas";
+import {
+  getBallotForElection,
+  getElectionResults,
+  submitBallot
+} from "./ballots.service";
+
+export async function getMyBallot(request: Request, response: Response): Promise<void> {
+  const { organizationId, electionId } = electionParamsSchema.parse(request.params);
+  const ballotState = await getBallotForElection(organizationId, electionId, request.user!.sub);
+
+  response.status(200).json(ballotState);
+}
+
+export async function submitMyBallot(request: Request, response: Response): Promise<void> {
+  const { organizationId, electionId } = electionParamsSchema.parse(request.params);
+  const payload = submitBallotSchema.parse(request.body);
+  const ballot = await submitBallot(organizationId, electionId, request.user!.sub, payload);
+
+  response.status(201).json({
+    message: "Ballot submitted successfully.",
+    ballot
+  });
+}
+
+export async function getResults(request: Request, response: Response): Promise<void> {
+  const { organizationId, electionId } = electionParamsSchema.parse(request.params);
+  const results = await getElectionResults(organizationId, electionId);
+
+  response.status(200).json(results);
+}
