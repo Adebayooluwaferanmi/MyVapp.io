@@ -69,6 +69,18 @@ Represents one voter submission for one election.
 
 Represents the selection inside a ballot for a specific office. The starter model enforces one vote per office per ballot.
 
+### ElectionEligibilityImportJob
+
+Represents a staged or committed voter-registry import for one election. This separates election operations from the broader organization membership list.
+
+### ElectionEligibility
+
+Represents one approved voter for one election. This is the authoritative source for whether someone may claim access to that election.
+
+### ElectionInvite
+
+Represents a one-time election invite token tied to a single election eligibility record. This is preferred over reusable visible voting IDs because it is easier to expire, revoke, audit, and protect.
+
 ## Authentication approach
 
 The first implemented auth module uses:
@@ -88,6 +100,14 @@ Recommended later upgrades:
 - Password reset
 - Login throttling
 - IP and audit event tracking
+
+The new alumni-election flow adds a second access layer:
+
+- managers still use the standard email/password JWT model
+- voters are approved through election-scoped eligibility
+- voters claim election access using a one-time link and their `member_unique_id`
+
+This keeps the existing platform auth model for administrators while tightening voter access around a specific election event.
 
 ## Infrastructure
 
@@ -119,10 +139,11 @@ The next stages of the architecture should be:
 
 1. Add organization administration and invitations.
 2. Add election creation and publishing flows.
-3. Add candidate nomination and approval workflows.
-4. Add ballot casting and vote tabulation modules.
-5. Add audit trails and result publication.
-6. Add test coverage and CI enforcement.
+3. Add election-scoped voter registry imports and one-time invite claims.
+4. Add candidate nomination and approval workflows.
+5. Add ballot casting and vote tabulation modules.
+6. Add audit trails and result publication.
+7. Add test coverage and CI enforcement.
 
 ## Recommended future folders
 
@@ -166,7 +187,22 @@ This app should be built around election integrity and organization flexibility,
 - Who is allowed to create or open an election?
 - Which offices belong to which election?
 - Has this voter already submitted a ballot?
+- Was this voter approved for this specific election?
+- Has this one-time invite already been claimed or expired?
 - Can this organization customize its office list?
 - Can we audit who changed the election state and when?
 
 Those questions are why the project benefits from a clear modular structure from the beginning.
+
+## Alumni election trust model
+
+For alumni elections, the platform is moving to this trust model:
+
+- organization membership controls manager/admin access
+- election eligibility controls voter access
+- voter registry imports come from `CSV` or `XLSX`, not PDF, in v1
+- invite links are one-time, election-bound, and time-bound
+- live turnout may be visible to managers during an open election
+- live candidate tallies remain hidden until the election closes
+
+This preserves transparency for operators without creating incentives for active voters to react to live polling swings.

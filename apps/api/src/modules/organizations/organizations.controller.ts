@@ -6,7 +6,8 @@ import {
   createOrganizationSchema,
   organizationMemberParamsSchema,
   organizationParamsSchema,
-  updateOrganizationMemberRoleSchema
+  updateOrganizationMemberRoleSchema,
+  updateOrganizationThemeBodySchema
 } from "./organizations.schemas";
 import {
   addOrganizationMember,
@@ -14,6 +15,7 @@ import {
   getOrganizationById,
   listOrganizationMembers,
   listOrganizationsForUser,
+  updateOrganizationTheme,
   updateOrganizationMemberRole
 } from "./organizations.service";
 
@@ -91,5 +93,21 @@ export async function patchOrganizationMemberRole(request: Request, response: Re
   response.status(200).json({
     message: "Organization member role updated successfully.",
     member
+  });
+}
+
+export async function patchOrganizationTheme(request: Request, response: Response): Promise<void> {
+  const { organizationId } = organizationParamsSchema.parse(request.params);
+  const payload = updateOrganizationThemeBodySchema.parse(request.body);
+  const organization = await updateOrganizationTheme(
+    organizationId,
+    payload,
+    request.user!.sub,
+    getRequestAuditContext(request)
+  );
+
+  response.status(200).json({
+    message: "Organization theme updated successfully.",
+    organization
   });
 }

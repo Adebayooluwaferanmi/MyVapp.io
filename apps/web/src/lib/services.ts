@@ -5,9 +5,13 @@ import type {
   BallotState,
   CurrentUser,
   ElectionDetail,
+  ElectionEligibilityImportPreview,
+  ElectionEligibilityRoster,
   ElectionSummary,
   OrganizationMember,
   Organization,
+  PublicElectionClaimContext,
+  OrganizationThemeInput,
   Results
 } from "../types";
 
@@ -65,10 +69,22 @@ export function listOrganizations(token: string) {
 
 export function createOrganization(
   token: string,
-  payload: { name: string; description: string }
+  payload: { name: string; description: string } & Partial<OrganizationThemeInput>
 ) {
   return apiRequest<{ organization: Organization }>("/organizations", {
     method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateOrganizationTheme(
+  token: string,
+  organizationId: string,
+  payload: OrganizationThemeInput
+) {
+  return apiRequest<{ organization: Organization }>(`/organizations/${organizationId}/theme`, {
+    method: "PATCH",
     token,
     body: JSON.stringify(payload)
   });
@@ -216,5 +232,99 @@ export function submitBallot(
     method: "POST",
     token,
     body: JSON.stringify({ selections })
+  });
+}
+
+export function previewElectionEligibilityImport(
+  token: string,
+  organizationId: string,
+  electionId: string,
+  payload: { filename: string; format: "CSV" | "XLSX" }
+) {
+  return apiRequest<ElectionEligibilityImportPreview>(
+    `/organizations/${organizationId}/elections/${electionId}/eligibility-imports/preview`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function commitElectionEligibilityImport(
+  token: string,
+  organizationId: string,
+  electionId: string,
+  importId: string,
+  payload: { note?: string }
+) {
+  return apiRequest<{ importJob: { id: string; committedAt: string } }>(
+    `/organizations/${organizationId}/elections/${electionId}/eligibility-imports/${importId}/commit`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function listElectionEligibility(
+  token: string,
+  organizationId: string,
+  electionId: string,
+  status?: string
+) {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+
+  return apiRequest<ElectionEligibilityRoster>(
+    `/organizations/${organizationId}/elections/${electionId}/eligibility${query}`,
+    { token }
+  );
+}
+
+export function sendElectionInvitations(
+  token: string,
+  organizationId: string,
+  electionId: string,
+  payload: { eligibilityIds?: string[] } = {}
+) {
+  return apiRequest<{ message: string }>(
+    `/organizations/${organizationId}/elections/${electionId}/invitations/send`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function resendElectionInvitation(
+  token: string,
+  organizationId: string,
+  electionId: string,
+  eligibilityId: string
+) {
+  return apiRequest<{ message: string }>(
+    `/organizations/${organizationId}/elections/${electionId}/invitations/${eligibilityId}/resend`,
+    {
+      method: "POST",
+      token
+    }
+  );
+}
+
+export function getPublicElectionClaimContext(electionSlug: string, token: string) {
+  return apiRequest<PublicElectionClaimContext>(
+    `/public/elections/${electionSlug}/claim-context?token=${encodeURIComponent(token)}`
+  );
+}
+
+export function claimPublicElectionInvite(
+  electionSlug: string,
+  payload: { token: string; memberUniqueId: string }
+) {
+  return apiRequest<AuthResponse>(`/public/elections/${electionSlug}/claim`, {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }

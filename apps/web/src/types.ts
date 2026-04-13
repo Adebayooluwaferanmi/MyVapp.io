@@ -1,3 +1,9 @@
+import type {
+  OrganizationThemeInput,
+  OrganizationThemeOverrides,
+  OrganizationThemePreset
+} from "./lib/theme";
+
 export type CurrentUser = {
   id: string;
   email: string;
@@ -22,6 +28,8 @@ export type Organization = {
   name: string;
   slug: string;
   description: string | null;
+  themePreset: OrganizationThemePreset;
+  themeOverrides: OrganizationThemeOverrides | null;
   members?: Array<{
     role: string;
   }>;
@@ -30,6 +38,8 @@ export type Organization = {
     members: number;
   };
 };
+
+export type { OrganizationThemeInput, OrganizationThemeOverrides, OrganizationThemePreset };
 
 export type OrganizationMember = {
   id: string;
@@ -92,6 +102,7 @@ export type ElectionSummary = {
   title: string;
   description: string | null;
   slug: string;
+  publicSlug?: string;
   status: string;
   startsAt: string | null;
   endsAt: string | null;
@@ -106,6 +117,110 @@ export type ElectionDetail = ElectionSummary & {
   offices: Office[];
   _count?: {
     ballots: number;
+  };
+};
+
+export type ElectionEligibilityStatus =
+  | "PENDING"
+  | "INVITED"
+  | "CLAIMED"
+  | "VOTED"
+  | "REVOKED"
+  | "EXPIRED";
+
+export type ElectionEligibilityImportPreview = {
+  importId: string;
+  acceptedRows: Array<{
+    rowNumber: number;
+    memberUniqueId: string;
+    fullName: string;
+    age: number;
+    email: string;
+  }>;
+  rejectedRows: Array<{
+    rowNumber: number;
+    values: Record<string, string | number | null>;
+    errors: string[];
+  }>;
+  summary: {
+    acceptedCount: number;
+    rejectedCount: number;
+  };
+};
+
+export type ElectionEligibilityRecord = {
+  id: string;
+  memberUniqueId: string;
+  fullName: string;
+  age: number;
+  email: string;
+  status: ElectionEligibilityStatus;
+  claimedAt: string | null;
+  votedAt: string | null;
+  createdAt: string;
+  importJob: null | {
+    id: string;
+    filename: string;
+    sourceFormat: "CSV" | "XLSX";
+    committedAt: string | null;
+    createdAt: string;
+  };
+  claimedBy: null | {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+  };
+  latestInvite: null | {
+    id: string;
+    expiresAt: string;
+    sentAt: string | null;
+    usedAt: string | null;
+    revokedAt: string | null;
+    createdAt: string;
+  };
+};
+
+export type ElectionEligibilityRoster = {
+  election: {
+    id: string;
+    title: string;
+    slug: string;
+    publicSlug: string;
+    status: string;
+    startsAt: string | null;
+    endsAt: string | null;
+    organization: {
+      id: string;
+      name: string;
+      slug: string;
+    };
+  };
+  summary: {
+    importedEligibleCount: number;
+    invitesSentCount: number;
+    claimedCount: number;
+    revokedCount: number;
+    expiredCount: number;
+    usedInviteCount: number;
+    ballotsSubmitted: number;
+  };
+  eligibilities: ElectionEligibilityRecord[];
+};
+
+export type PublicElectionClaimContext = {
+  election: {
+    id: string;
+    title: string;
+    organizationName: string;
+    status: string;
+    startsAt: string | null;
+    endsAt: string | null;
+  };
+  invite: {
+    expiresAt: string;
+    claimed: boolean;
+    revoked: boolean;
   };
 };
 

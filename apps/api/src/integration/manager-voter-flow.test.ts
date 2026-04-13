@@ -22,6 +22,8 @@ type OrganizationResponse = {
   organization: {
     id: string;
     name: string;
+    themePreset: string;
+    themeOverrides: Record<string, unknown> | null;
   };
 };
 
@@ -153,13 +155,23 @@ describe.skipIf(!runDbTests)("manager to voter election flow", () => {
       .set("Authorization", `Bearer ${managerAuth.token}`)
       .send({
         name: organizationName,
-        description: "Integration test organization"
+        description: "Integration test organization",
+        themePreset: "emerald-hall",
+        themeOverrides: {
+          primary: "#14532d",
+          accent: "#0f766e"
+        }
       });
 
     expect(organizationResponse.status).toBe(201);
 
     const organizationBody = organizationResponse.body as OrganizationResponse;
     organizationId = organizationBody.organization.id;
+    expect(organizationBody.organization.themePreset).toBe("emerald-hall");
+    expect(organizationBody.organization.themeOverrides).toMatchObject({
+      primary: "#14532d",
+      accent: "#0f766e"
+    });
 
     const inviteVoterResponse = await request(app)
       .post(`/api/v1/organizations/${organizationId}/members`)
@@ -188,6 +200,33 @@ describe.skipIf(!runDbTests)("manager to voter election flow", () => {
     expect(voterLoginResponse.status).toBe(200);
 
     const voterAuth = voterLoginResponse.body as AuthResponse;
+
+    const voterThemePatchResponse = await request(app)
+      .patch(`/api/v1/organizations/${organizationId}/theme`)
+      .set("Authorization", `Bearer ${voterAuth.token}`)
+      .send({
+        themePreset: "sunrise-coral"
+      });
+
+    expect(voterThemePatchResponse.status).toBe(403);
+
+    const managerThemePatchResponse = await request(app)
+      .patch(`/api/v1/organizations/${organizationId}/theme`)
+      .set("Authorization", `Bearer ${managerAuth.token}`)
+      .send({
+        themePreset: "sunrise-coral",
+        themeOverrides: {
+          primary: "#c2410c",
+          accent: "#ea580c"
+        }
+      });
+
+    expect(managerThemePatchResponse.status).toBe(200);
+    expect((managerThemePatchResponse.body as OrganizationResponse).organization.themePreset).toBe("sunrise-coral");
+    expect((managerThemePatchResponse.body as OrganizationResponse).organization.themeOverrides).toMatchObject({
+      primary: "#c2410c",
+      accent: "#ea580c"
+    });
 
     const createElectionResponse = await request(app)
       .post(`/api/v1/organizations/${organizationId}/elections`)
@@ -332,6 +371,7 @@ describe.skipIf(!runDbTests)("manager to voter election flow", () => {
       expect.arrayContaining([
         "organization.created",
         "organization.member_added",
+        "organization.theme_updated",
         "election.created",
         "election.office_created",
         "election.candidate_created",
@@ -345,6 +385,12 @@ describe.skipIf(!runDbTests)("manager to voter election flow", () => {
     expect(voterBallotAudit?.metadata).toMatchObject({
       electionId,
       selectionCount: 1
+    });
+
+    const themeAudit = auditBody.auditLogs.find((entry) => entry.action === "organization.theme_updated");
+    expect(themeAudit?.actor.email).toBe(managerEmail);
+    expect(themeAudit?.metadata).toMatchObject({
+      themePreset: "sunrise-coral"
     });
   }, 30_000);
 });

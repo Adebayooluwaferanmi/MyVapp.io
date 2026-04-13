@@ -13,6 +13,7 @@ import {
   getOrganization,
   getOrganizationMembers,
   listOrganizations,
+  patchOrganizationTheme,
   patchOrganizationMemberRole
 } from "./organizations.controller";
 
@@ -26,6 +27,12 @@ organizationsRouter.post("/", createOrganization);
 organizationsRouter.use("/:organizationId/elections", requireOrganizationMember, electionsRouter);
 
 organizationsRouter.get("/:organizationId", requireOrganizationMember, getOrganization);
+organizationsRouter.patch(
+  "/:organizationId/theme",
+  requireOrganizationMember,
+  requireOrganizationManager,
+  patchOrganizationTheme
+);
 organizationsRouter.get(
   "/:organizationId/members",
   requireOrganizationMember,

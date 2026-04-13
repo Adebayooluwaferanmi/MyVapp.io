@@ -35,19 +35,35 @@ enum ElectionStatus {
   ARCHIVED
 }
 
+enum ElectionEligibilityStatus {
+  PENDING
+  INVITED
+  CLAIMED
+  VOTED
+  REVOKED
+  EXPIRED
+}
+
+enum ImportSourceFormat {
+  CSV
+  XLSX
+}
+
 model User {
-  id           String               @id @default(cuid())
-  email        String               @unique
-  passwordHash String
-  firstName    String
-  lastName     String
-  role         UserRole             @default(VOTER)
-  status       UserStatus           @default(ACTIVE)
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
-  memberships  OrganizationMember[]
-  ballots      Ballot[]
-  auditLogs    AuditLog[]
+  id                           String                        @id @default(cuid())
+  email                        String                        @unique
+  passwordHash                 String
+  firstName                    String
+  lastName                     String
+  role                         UserRole                      @default(VOTER)
+  status                       UserStatus                    @default(ACTIVE)
+  createdAt                    DateTime                      @default(now())
+  updatedAt                    DateTime                      @updatedAt
+  memberships                  OrganizationMember[]
+  ballots                      Ballot[]
+  auditLogs                    AuditLog[]
+  uploadedEligibilityImportJobs ElectionEligibilityImportJob[] @relation("EligibilityImportUploader")
+  claimedElectionEligibilities ElectionEligibility[]         @relation("ClaimedElectionEligibility")
 }
 
 model Organization {
@@ -55,6 +71,8 @@ model Organization {
   name        String
   slug        String               @unique
   description String?
+  themePreset String               @default("myvapp-default")
+  themeOverrides Json?
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
   elections   Election[]
@@ -75,21 +93,80 @@ model OrganizationMember {
 }
 
 model Election {
-  id             String         @id @default(cuid())
-  organizationId String
-  title          String
-  slug           String
-  description    String?
-  status         ElectionStatus @default(DRAFT)
-  startsAt       DateTime?
-  endsAt         DateTime?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  offices        Office[]
-  ballots        Ballot[]
+  id                String                        @id @default(cuid())
+  organizationId    String
+  title             String
+  slug              String
+  publicSlug        String                        @unique @default(cuid())
+  description       String?
+  status            ElectionStatus                @default(DRAFT)
+  startsAt          DateTime?
+  endsAt            DateTime?
+  createdAt         DateTime                      @default(now())
+  updatedAt         DateTime                      @updatedAt
+  organization      Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  offices           Office[]
+  ballots           Ballot[]
+  eligibilityImports ElectionEligibilityImportJob[]
+  eligibilities     ElectionEligibility[]
 
   @@unique([organizationId, slug])
+}
+
+model ElectionEligibilityImportJob {
+  id               String             @id @default(cuid())
+  electionId        String
+  uploadedByUserId String
+  filename         String
+  sourceFormat     ImportSourceFormat
+  summary          Json?
+  committedAt      DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  election         Election           @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  uploadedBy       User               @relation("EligibilityImportUploader", fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+  eligibilities    ElectionEligibility[]
+
+  @@index([electionId, createdAt(sort: Desc)])
+}
+
+model ElectionEligibility {
+  id              String                    @id @default(cuid())
+  electionId       String
+  importJobId      String?
+  memberUniqueId  String
+  fullName        String
+  age             Int
+  email           String
+  status          ElectionEligibilityStatus @default(PENDING)
+  claimedByUserId String?
+  claimedAt       DateTime?
+  votedAt         DateTime?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  election        Election                  @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  importJob       ElectionEligibilityImportJob? @relation(fields: [importJobId], references: [id], onDelete: SetNull)
+  claimedBy       User?                     @relation("ClaimedElectionEligibility", fields: [claimedByUserId], references: [id], onDelete: SetNull)
+  invites         ElectionInvite[]
+
+  @@unique([electionId, memberUniqueId])
+  @@unique([electionId, email])
+  @@index([electionId, status])
+}
+
+model ElectionInvite {
+  id            String              @id @default(cuid())
+  eligibilityId String
+  tokenHash     String              @unique
+  expiresAt     DateTime
+  sentAt        DateTime?
+  usedAt        DateTime?
+  revokedAt     DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  eligibility   ElectionEligibility @relation(fields: [eligibilityId], references: [id], onDelete: Cascade)
+
+  @@index([eligibilityId, createdAt(sort: Desc)])
 }
 
 model Office {
