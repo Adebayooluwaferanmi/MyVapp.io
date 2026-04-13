@@ -108,6 +108,7 @@ async function recreateElection(options: {
   }>;
 }) {
   const slug = slugify(options.title);
+  const publicSlug = slugify(`${options.title}-${options.organizationId.slice(0, 6)}`) || `${slug}-public`;
 
   const existing = await prisma.election.findFirst({
     where: {
@@ -127,6 +128,7 @@ async function recreateElection(options: {
       organizationId: options.organizationId,
       title: options.title,
       slug,
+      publicSlug,
       description: options.description,
       status: options.status,
       startsAt: options.startsAt ?? null,

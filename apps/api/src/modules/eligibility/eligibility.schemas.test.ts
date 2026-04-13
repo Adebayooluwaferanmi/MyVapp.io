@@ -8,14 +8,15 @@ import {
 } from "./eligibility.schemas";
 
 describe("eligibility schemas", () => {
-  it("accepts preview metadata for csv and xlsx imports", () => {
+  it("accepts preview payloads for csv and xlsx imports", () => {
     expect(
       previewElectionEligibilityImportSchema.parse({
-        filename: "alumni-registry.csv",
-        format: "CSV"
+        filename: "voter-registry.csv",
+        format: "CSV",
+        contentBase64: "bWVtYmVyX3VuaXF1ZV9pZCxmdWxsX25hbWUsYWdlLGVtYWls"
       })
     ).toMatchObject({
-      filename: "alumni-registry.csv",
+      filename: "voter-registry.csv",
       format: "CSV"
     });
   });

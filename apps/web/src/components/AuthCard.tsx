@@ -38,8 +38,8 @@ export function AuthCard({ onAuthenticated }: AuthCardProps) {
 
   const subtitle =
     mode === "register"
-      ? "Create your first admin or voter account to initialize the workspace."
-      : "Sign in to continue managing organizations, elections, offices, and ballots.";
+      ? "Create an account to start using MyVapp."
+      : "Sign in to manage elections or cast your ballot.";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -62,13 +62,13 @@ export function AuthCard({ onAuthenticated }: AuthCardProps) {
     <Card className="border-white/80 bg-white/95 shadow-[0_24px_70px_-32px_rgba(15,23,42,0.45)]">
       <CardHeader className="space-y-5">
         <div className="flex items-center justify-between gap-3">
-          <Badge variant="outline">Secure access</Badge>
+          <Badge variant="outline">Sign in</Badge>
           <div className="rounded-full bg-[color:var(--secondary)] p-3 text-[color:var(--primary)]">
             <ShieldCheck className="size-5" />
           </div>
         </div>
         <div className="space-y-2">
-          <CardTitle>{mode === "register" ? "Start your voting workspace" : "Welcome back"}</CardTitle>
+          <CardTitle>{mode === "register" ? "Create your account" : "Welcome back"}</CardTitle>
           <p className="text-sm text-[color:var(--muted-foreground)]">{subtitle}</p>
         </div>
         <div className="grid grid-cols-2 rounded-full bg-[color:var(--muted)] p-1">

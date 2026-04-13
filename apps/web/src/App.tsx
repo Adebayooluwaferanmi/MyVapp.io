@@ -28,7 +28,7 @@ function getStoredSession(): StoredSession | null {
 function connectionTone(message: string) {
   const lower = message.toLowerCase();
 
-  if (lower.includes("ok")) {
+  if (lower.includes("online") || lower.includes("connected")) {
     return "success" as const;
   }
 
@@ -63,8 +63,8 @@ function SiteHeader({
 
         {showMarketingNav ? (
           <nav className="hidden items-center gap-6 text-sm font-medium text-[color:var(--muted-foreground)] lg:flex">
-            <a href="#principles">Principles</a>
-            <a href="#flow">Flow</a>
+            <a href="#principles">Why it works</a>
+            <a href="#flow">How it works</a>
             <a href="#access">Access</a>
           </nav>
         ) : (
@@ -81,7 +81,7 @@ function SiteFooter() {
   return (
     <footer className="mt-20 border-t border-[color:var(--border)] bg-white/70">
       <div className="mx-auto flex w-[min(1280px,calc(100%-1.5rem))] flex-col justify-between gap-4 py-8 text-sm text-[color:var(--muted-foreground)] md:flex-row md:items-center">
-        <p>© {new Date().getFullYear()} MyVapp. Trusted voting workflows for organizations.</p>
+        <p>© {new Date().getFullYear()} MyVapp. Run elections for your organization.</p>
         <div className="flex flex-wrap gap-4">
           <a href="#privacy">Privacy</a>
           <a href="#terms">Terms</a>
@@ -94,13 +94,17 @@ function SiteFooter() {
 
 export default function App() {
   const [session, setSession] = useState<StoredSession | null>(() => getStoredSession());
-  const [healthMessage, setHealthMessage] = useState("Checking API...");
+  const [healthMessage, setHealthMessage] = useState("Checking connection...");
   const { setTheme } = useAppTheme();
 
   useEffect(() => {
     getHealthStatus()
-      .then((result) => setHealthMessage(`${result.service} is ${result.status}.`))
-      .catch(() => setHealthMessage("API is not reachable yet."));
+      .then((result) =>
+        setHealthMessage(result.status.toLowerCase() === "ok" ? "API online" : "Connection available")
+      )
+      .catch((error) =>
+        setHealthMessage(error instanceof Error ? error.message : "Cannot reach the API right now.")
+      );
   }, []);
 
   useEffect(() => {
@@ -185,35 +189,34 @@ export default function App() {
         <section className="grid gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(22rem,0.7fr)]">
           <Card className="overflow-hidden border-white/70 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--card)_92%,white),color-mix(in_srgb,var(--secondary)_65%,white))]">
             <CardContent className="space-y-6 p-8 md:p-10">
-              <Badge variant="outline">Research-informed voting interface</Badge>
+              <Badge variant="outline">Simple election software</Badge>
               <div className="space-y-4">
                 <h1 className="max-w-3xl font-[family:var(--font-heading)] text-5xl leading-[1.02] md:text-6xl">
-                  A voting app should feel calm, clear, and trustworthy from the first screen.
+                  Run your election without the clutter.
                 </h1>
                 <p className="max-w-2xl text-base leading-7 text-[color:var(--muted-foreground)] md:text-lg">
-                  MyVapp centers the patterns that repeatedly show up in strong election interfaces:
-                  simple hierarchy, visible status windows, clear review steps, and ballot surfaces
-                  that help people confirm intent before they submit.
+                  Set up elections, manage members, and let people vote in a flow that is easy to
+                  follow from start to finish.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Badge variant="success">{healthMessage}</Badge>
-                <Badge variant="outline">Readable ballot flow</Badge>
-                <Badge variant="outline">Role-based workspace</Badge>
+                <Badge variant="outline">Clear ballot flow</Badge>
+                <Badge variant="outline">Admin and voter views</Badge>
               </div>
             </CardContent>
           </Card>
 
           <Card className="border-white/70 bg-white/95">
             <CardHeader className="space-y-3">
-              <Badge variant="outline">Launch checklist</Badge>
-              <CardTitle>What strong voting UIs keep visible</CardTitle>
+              <Badge variant="outline">What matters</Badge>
+              <CardTitle>What voters need to see</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               {[
-                ["Clear progression", "Selection, review, submission, and results each need their own visual stage."],
-                ["Trust cues in context", "Status, deadlines, and one-ballot rules should stay near the action."],
-                ["Readable choices", "Candidate options should be easy to compare without feeling like raw form controls."]
+                ["A clear order", "People should always know what comes next: choose, review, then submit."],
+                ["Important details nearby", "Status, dates, and voting rules should sit close to the ballot."],
+                ["Choices that are easy to read", "Candidates should be easy to compare without making the page feel busy."]
               ].map(([title, body]) => (
                 <div key={title} className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/55 p-4">
                   <p className="font-semibold">{title}</p>
@@ -228,18 +231,18 @@ export default function App() {
           {[
             {
               Icon: ShieldCheck,
-              title: "Simple ballot surfaces",
-              body: "Voters should see one office at a time, clear candidate cards, and less visual clutter."
+              title: "Clear choices",
+              body: "Voters should be able to compare candidates quickly without sorting through clutter."
             },
             {
               Icon: Vote,
-              title: "Visible status and timing",
-              body: "Election state, start and end windows, and completion progress stay in view while voting."
+              title: "Status and dates",
+              body: "Election status, start time, end time, and progress should stay easy to find."
             },
             {
               Icon: LayoutPanelTop,
-              title: "Review before cast",
-              body: "A clear summary panel helps people verify choices before they commit a one-time submission."
+              title: "Review before submit",
+              body: "A simple summary helps people check their choices before they send a final vote."
             }
           ].map(({ Icon, title, body }) => (
             <Card key={title} className="border-white/70 bg-white/95">
@@ -258,15 +261,15 @@ export default function App() {
 
         <section id="flow" className="space-y-5">
           <div className="space-y-2">
-            <Badge variant="outline">How the front end is organized</Badge>
-            <h2 className="font-[family:var(--font-heading)] text-4xl">Built around the natural rhythm of online voting</h2>
+            <Badge variant="outline">How it works</Badge>
+            <h2 className="font-[family:var(--font-heading)] text-4xl">A simple voting flow</h2>
           </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {[
-              ["01", "Choose context first", "Users select the organization and election before the interface asks them to take action."],
-              ["02", "Read choices clearly", "Each office is separated, candidates are easier to compare, and deadlines stay visible."],
-              ["03", "Review in one place", "A dedicated review panel keeps progress, pending offices, and selected candidates together."],
-              ["04", "Manage with less clutter", "Admins get a more organized lifecycle view for setup, voting, results, and audit activity."]
+              ["01", "Pick your election", "Start by choosing the organization and election you want to work on."],
+              ["02", "Review each office", "Candidates are grouped by office so voters can make one clear choice at a time."],
+              ["03", "Check your ballot", "A review panel keeps your progress and selections in one place."],
+              ["04", "Manage from one workspace", "Admins can set up elections, open voting, and check results without jumping around."]
             ].map(([step, title, body]) => (
               <Card key={step} className="border-white/70 bg-white/95">
                 <CardContent className="space-y-4 p-6">
@@ -287,16 +290,16 @@ export default function App() {
           <AuthCard onAuthenticated={handleAuthenticated} />
           <Card className="border-white/70 bg-white/95">
             <CardHeader className="space-y-3">
-              <Badge variant="outline">Role-based entry</Badge>
-              <CardTitle>Designed for both election managers and voters</CardTitle>
+              <Badge variant="outline">Who it's for</Badge>
+              <CardTitle>Built for admins and voters</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid gap-3">
                 {[
-                  "Register and sign in with secured JWT sessions.",
-                  "Create or switch organizations without losing context.",
-                  "Manage elections through clearer lifecycle stages instead of scattered tools.",
-                  "Cast ballots through candidate cards and a review-first submission flow."
+                  "Create an account and sign in securely.",
+                  "Switch between organizations without losing your place.",
+                  "Set up elections, offices, and candidates in one workspace.",
+                  "Vote with a simple ballot and a final review step."
                 ].map((item) => (
                   <div key={item} className="flex items-start gap-3 rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/50 p-3">
                     <CheckCircle2 className="mt-0.5 size-4 text-[color:var(--success)]" />
@@ -306,9 +309,9 @@ export default function App() {
               </div>
               <div className="grid gap-4 md:grid-cols-3">
                 {[
-                  ["Managers", "See the next action, monitor readiness, and manage election status with less noise."],
-                  ["Voters", "Access open ballots, review each office clearly, and confirm submission with confidence."],
-                  ["Platform", "Keep frontend, API, and data flow aligned around a realistic election journey."]
+                  ["Managers", "Create elections, manage members, and keep voting on track."],
+                  ["Voters", "Open a ballot, choose candidates, and submit once."],
+                  ["Platform", "Keep the frontend, API, and voting flow working together cleanly."]
                 ].map(([title, body]) => (
                   <div key={title} className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-white p-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--muted-foreground)]">{title}</p>

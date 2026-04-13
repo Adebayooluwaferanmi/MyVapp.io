@@ -1,17 +1,17 @@
-# Alumni Election Runbook
+# Voter Registry Runbook
 
-This runbook describes the intended operator flow for an alumni election in MyVapp.
+This runbook describes the operator flow for an election that uses a pre-approved voter registry in MyVapp.
 
 ## Target operating model
 
-Use this workflow when the association already has an official voter register and wants secure, election-scoped access instead of open self-registration.
+Use this workflow when an organization already has an official voter register and wants secure, election-scoped access instead of open self-registration.
 
 ## End-to-end flow
 
 1. Create the organization if it does not already exist.
 2. Create the election and set its timeline.
 3. Build the ballot by adding offices and candidates.
-4. Import the approved alumni voter register from `CSV` or `XLSX`.
+4. Import the approved voter register from `CSV` or `XLSX`.
 5. Review validation errors and commit the approved eligibility roster.
 6. Send one-time election invitation links to eligible voters.
 7. Monitor invite delivery, claimed access, and submitted-ballot turnout.
@@ -57,11 +57,11 @@ This is safer than issuing a reusable visible “voting ID”.
 
 - Data model and API contracts are in place.
 - The election eligibility roster endpoint is available.
-- Import preview/commit, invite delivery, and public claim endpoints are scaffolded but not implemented yet.
 
 ### Milestone 2
 
-- CSV/XLSX parsing, row validation, and invitation delivery.
+- CSV/XLSX parsing, row validation, import preview/commit, and invitation delivery are implemented.
+- The manager workspace can preview a voter registry, commit accepted rows, filter election eligibility, and send or resend invites.
 
 ### Milestone 3
 

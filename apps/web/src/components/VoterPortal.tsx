@@ -305,8 +305,8 @@ export function VoterPortal({
     <PageShell>
       <PageHeader
         eyebrow="Voter portal"
-        title="Review the ballot, make your selections, and submit once with confidence."
-        description="Choose the right organization, open the active election, review candidates office by office, and confirm your ballot in one clear place."
+        title="Review your ballot and submit when you're ready."
+        description="Choose an organization, open an election, and pick one candidate for each office."
         actions={
           <>
             <Button variant="secondary" onClick={() => void onRefreshProfile()} type="button">
@@ -357,7 +357,7 @@ export function VoterPortal({
 
       {notice ? (
         <Alert variant={notice.tone === "error" ? "destructive" : "success"}>
-          <AlertTitle>{notice.tone === "error" ? "Something needs attention" : "Success"}</AlertTitle>
+          <AlertTitle>{notice.tone === "error" ? "Please check this" : "Done"}</AlertTitle>
           <AlertDescription>{notice.text}</AlertDescription>
         </Alert>
       ) : null}
@@ -369,7 +369,7 @@ export function VoterPortal({
               <p className="font-[family:var(--font-heading)] text-3xl">
                 {session.user.firstName} {session.user.lastName}
               </p>
-              <p className="text-sm text-[color:var(--muted-foreground)]">Voter workspace overview</p>
+              <p className="text-sm text-[color:var(--muted-foreground)]">Your voter account</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
               <MetricCard label="Organizations" value={organizations.length} />
@@ -377,7 +377,7 @@ export function VoterPortal({
             </div>
           </SectionCard>
 
-          <SectionCard title="Organizations" description={isLoadingOrganizations ? "Loading organizations..." : "Choose where you want to vote."}>
+          <SectionCard title="Organizations" description={isLoadingOrganizations ? "Loading organizations..." : "Choose an organization."}>
             {organizations.length === 0 ? (
               <p className="text-sm text-[color:var(--muted-foreground)]">No organizations are linked to this account yet.</p>
             ) : (
@@ -395,7 +395,7 @@ export function VoterPortal({
                   >
                     <p className="font-semibold">{organization.name}</p>
                     <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                      {organization.description ?? "No organization description provided."}
+                      {organization.description ?? "No description yet."}
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Badge variant="outline">{organization._count?.elections ?? 0} elections</Badge>
@@ -407,7 +407,7 @@ export function VoterPortal({
             )}
           </SectionCard>
 
-          <SectionCard title="Election queue" description={isLoadingElections ? "Refreshing elections..." : "Open ballots appear first."}>
+          <SectionCard title="Elections" description={isLoadingElections ? "Refreshing elections..." : "Open elections are shown first."}>
             {elections.length === 0 ? (
               <p className="text-sm text-[color:var(--muted-foreground)]">No elections available for this organization yet.</p>
             ) : (
@@ -435,7 +435,7 @@ export function VoterPortal({
                           >
                             <p className="font-semibold">{election.title}</p>
                             <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                              {election.description ?? "No election description yet."}
+                              {election.description ?? "No description yet."}
                             </p>
                             <div className="mt-3 flex flex-wrap gap-2">
                               <StatusBadge status={election.status} />
@@ -456,19 +456,19 @@ export function VoterPortal({
           {!selectedOrganization ? (
             <EmptyState
               title="Choose an organization"
-              body="Select one of your organizations to load available elections and ballots."
+              body="Select one of your organizations to see available elections and ballots."
             />
           ) : !selectedElection ? (
             <EmptyState
               title="Select an election"
-              body="Choose an election from the queue to review its offices and candidates."
+              body="Choose an election to review the offices and candidates."
             />
           ) : (
             <>
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
                 <SectionCard
                   title={selectedElection.title}
-                  description={selectedElection.description ?? "This election has no description yet."}
+                  description={selectedElection.description ?? "No description yet."}
                 >
                   <div className="flex flex-wrap gap-2">
                     <StatusBadge status={selectedElection.status} />
@@ -481,17 +481,17 @@ export function VoterPortal({
                   <Progress value={completionPercent} />
                   <p className="text-sm text-[color:var(--muted-foreground)]">
                     {hasSubmittedBallot
-                      ? "Your ballot is locked in for this election."
+                      ? "Your ballot has been submitted for this election."
                       : ballotIsOpen
-                        ? "Review each office carefully. You can submit only once."
-                        : "Voting opens only when the election status is OPEN."}
+                        ? "Choose one candidate in each office. You can only submit once."
+                        : "Voting will open when this election is marked OPEN."}
                   </p>
                 </SectionCard>
               </div>
 
               <SectionCard
                 title={selectedElection.title}
-                description={`${selectedOrganization.name} · Review candidates office by office before you submit.`}
+                description={`${selectedOrganization.name} · Choose one candidate in each office.`}
                 action={<StatusBadge status={selectedElection.status} />}
               >
                 {isLoadingBallot ? (
@@ -510,7 +510,7 @@ export function VoterPortal({
                               <div className="space-y-1">
                                 <h3 className="font-[family:var(--font-heading)] text-2xl">{office.title}</h3>
                                 <p className="text-sm text-[color:var(--muted-foreground)]">
-                                  {office.description ?? "No office description provided."}
+                                  {office.description ?? "No description yet."}
                                 </p>
                               </div>
                               <Badge variant="outline">{office.seats} seat{office.seats === 1 ? "" : "s"}</Badge>
@@ -550,7 +550,7 @@ export function VoterPortal({
                                         {isSelected ? <Badge variant="success">Selected</Badge> : null}
                                       </div>
                                       <p className="text-sm text-[color:var(--muted-foreground)]">
-                                        {candidate.bio ?? "No candidate bio supplied."}
+                                        {candidate.bio ?? "No bio yet."}
                                       </p>
                                     </div>
                                   </label>
@@ -563,8 +563,8 @@ export function VoterPortal({
                     </div>
 
                     <ReviewPanel
-                      title="Before you submit"
-                      subtitle="Review your selections and confirm the one-ballot rule."
+                      title="Review your ballot"
+                      subtitle="Check your choices before you submit."
                       progress={completionPercent}
                       stats={[
                         {
@@ -591,13 +591,13 @@ export function VoterPortal({
                             ? "Ballot submitted"
                             : activeAction === "submit-ballot"
                               ? "Submitting..."
-                              : "Review and submit ballot"}
+                              : "Submit ballot"}
                         </Button>
                       }
                       notes={
                         hasSubmittedBallot
-                          ? "Your ballot has been recorded for this election."
-                          : "Take a final look at the review list before confirming your submission."
+                          ? "Your vote has been recorded."
+                          : "You can only submit once for this election."
                       }
                     />
                   </form>

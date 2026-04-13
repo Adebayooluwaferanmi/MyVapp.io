@@ -10,8 +10,8 @@ import {
 describe("organization schemas", () => {
   it("accepts a valid organization payload", () => {
     const payload = createOrganizationSchema.parse({
-      name: "National Alumni Council",
-      description: "Umbrella body for alumni elections.",
+      name: "National Member Council",
+      description: "Umbrella body for organization elections.",
       themePreset: "civic-blue",
       themeOverrides: {
         primary: "#1d4ed8",
@@ -19,7 +19,7 @@ describe("organization schemas", () => {
       }
     });
 
-    expect(payload.name).toBe("National Alumni Council");
+    expect(payload.name).toBe("National Member Council");
     expect(payload.themePreset).toBe("civic-blue");
   });
 

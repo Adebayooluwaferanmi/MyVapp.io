@@ -1,4 +1,4 @@
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -23,6 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  commitElectionEligibilityImport,
   createOrganizationMember,
   createCandidate,
   createElection,
@@ -32,9 +33,13 @@ import {
   getElectionDetail,
   getElectionResults,
   listElections,
+  listElectionEligibility,
   listOrganizationAuditLogs,
   listOrganizationMembers,
   listOrganizations,
+  previewElectionEligibilityImport,
+  resendElectionInvitation,
+  sendElectionInvitations,
   submitBallot,
   updateOrganizationTheme,
   updateOrganizationMemberRole,
@@ -45,6 +50,9 @@ import type {
   AuditLog,
   BallotState,
   ElectionDetail,
+  ElectionEligibilityImportPreview,
+  ElectionEligibilityRoster,
+  ElectionEligibilityStatus,
   ElectionSummary,
   OrganizationMember,
   Organization,
@@ -84,12 +92,12 @@ const sectionLabelMap: Record<WorkspaceSection, string> = {
 };
 
 const sectionHintMap: Record<WorkspaceSection, string> = {
-  members: "Invite members, assign organization roles, and manage voter eligibility.",
-  setup: "Create and select elections, then set status windows.",
-  structure: "Define offices and candidate lists for the selected election.",
-  vote: "Cast ballots with one candidate choice per office.",
-  results: "Review manager-facing tally and vote distribution.",
-  audit: "Inspect recent sensitive actions such as member role changes and ballot submissions."
+  members: "Add members, update roles, and control ballot access.",
+  setup: "Create elections and update their status.",
+  structure: "Add offices and candidates for the selected election.",
+  vote: "Review the ballot and submit one choice per office.",
+  results: "View results for the selected election.",
+  audit: "Review recent account, membership, and ballot activity."
 };
 
 const initialOrganizationForm: {
@@ -125,6 +133,62 @@ const initialMemberForm = {
   email: "",
   role: "VOTER"
 };
+
+const eligibilityStatusOptions = ["ALL", "PENDING", "INVITED", "CLAIMED", "VOTED", "REVOKED", "EXPIRED"] as const;
+
+type EligibilityFilterValue = (typeof eligibilityStatusOptions)[number];
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const result = reader.result;
+
+      if (typeof result !== "string") {
+        reject(new Error("The selected file could not be read."));
+        return;
+      }
+
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      resolve(base64);
+    };
+
+    reader.onerror = () => reject(new Error("The selected file could not be read."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function resolveImportFormat(fileName: string): "CSV" | "XLSX" | null {
+  const lower = fileName.toLowerCase();
+
+  if (lower.endsWith(".csv")) {
+    return "CSV";
+  }
+
+  if (lower.endsWith(".xlsx")) {
+    return "XLSX";
+  }
+
+  return null;
+}
+
+function formatInviteSkipReason(reason: string) {
+  switch (reason) {
+    case "already_claimed":
+      return "Already claimed";
+    case "already_voted":
+      return "Already voted";
+    case "revoked":
+      return "Revoked";
+    case "expired":
+      return "Expired";
+    case "already_sent":
+      return "Already sent";
+    default:
+      return toTitleCase(reason);
+  }
+}
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) {
@@ -287,6 +351,12 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("setup");
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   const [isLoadingAuditLogs, setIsLoadingAuditLogs] = useState(false);
+  const [eligibilityRoster, setEligibilityRoster] = useState<ElectionEligibilityRoster | null>(null);
+  const [isLoadingEligibility, setIsLoadingEligibility] = useState(false);
+  const [eligibilityFilter, setEligibilityFilter] = useState<EligibilityFilterValue>("ALL");
+  const [registryFile, setRegistryFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<ElectionEligibilityImportPreview | null>(null);
+  const [importInputKey, setImportInputKey] = useState(0);
 
   const selectedOrganization = useMemo(
     () => organizations.find((organization) => organization.id === selectedOrganizationId) ?? null,
@@ -367,8 +437,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
         tone: members.length > 1 ? "ready" : selectedOrganization ? "attention" : "locked",
         meta: `${members.length} organization members`,
         description: selectedOrganization
-          ? "Add admins and eligible voters before expecting ballot access."
-          : "Choose an organization before managing membership and voter eligibility.",
+          ? "Add people and choose who can vote before voting starts."
+          : "Choose an organization before managing members.",
         disabled: !selectedOrganization
       },
       {
@@ -376,8 +446,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
         tone: selectedElectionId ? "ready" : "attention",
         meta: selectedElectionLabel,
         description: selectedElectionId
-          ? `Status is ${toTitleCase(electionDetail?.status ?? "draft")}. Manage timing and publication here.`
-          : "Create or select an election before configuring the rest of the workflow.",
+          ? `Status is ${toTitleCase(electionDetail?.status ?? "draft")}. Update dates and status here.`
+          : "Create or choose an election before moving on.",
         disabled: false
       },
       {
@@ -385,8 +455,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
         tone: currentOffices.length > 0 ? "ready" : selectedElectionId ? "attention" : "locked",
         meta: `${currentOffices.length} offices · ${candidateCount} candidates`,
         description: selectedElectionId
-          ? "Define the ballot structure by adding offices and candidate lists."
-          : "Choose an election first to unlock office and candidate setup.",
+          ? "Add the offices and candidates that will appear on the ballot."
+          : "Choose an election first.",
         disabled: !selectedElectionId
       },
       {
@@ -399,8 +469,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
               : "locked",
         meta: hasSubmittedBallot ? "Ballot submitted" : electionDetail?.status === "OPEN" ? "Voting open" : "Voting closed",
         description: hasBallotChoices
-          ? "Voters can choose one candidate per office and submit their ballot."
-          : "Add offices and candidates, then open the election to enable voting.",
+          ? "The ballot is ready for testing or live voting."
+          : "Add offices and candidates, then open the election.",
         disabled: !selectedElectionId
       },
       {
@@ -408,8 +478,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
         tone: hasResults ? "ready" : selectedElectionId ? "attention" : "locked",
         meta: hasResults ? `${results?.offices.length ?? 0} office tallies available` : "Awaiting counted votes",
         description: canManageSelectedOrganization
-          ? "Managers can inspect live or historical tallies for the selected election."
-          : "Results are reserved for managers in the selected organization.",
+          ? "Managers can review vote totals here."
+          : "Only managers can view results.",
         disabled: !selectedElectionId
       },
       {
@@ -417,8 +487,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
         tone: hasAuditLogs ? "ready" : selectedOrganization ? "attention" : "locked",
         meta: hasAuditLogs ? `${auditLogs.length} recent audit events` : "No recent audit events",
         description: canManageSelectedOrganization
-          ? "Review security-relevant activity without exposing actual ballot selections."
-          : "Audit visibility is reserved for organization managers.",
+          ? "Review recent actions without exposing ballot choices."
+          : "Only managers can view the audit log.",
         disabled: !selectedOrganization || !canManageSelectedOrganization
       }
     ];
@@ -442,17 +512,17 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
   const recommendedStep = useMemo(() => {
     if (!selectedOrganization) {
       return {
-        title: "Start by choosing an organization",
-        body: "Create a new organization or select an existing one so the election workspace can load.",
+        title: "Choose an organization",
+        body: "Create a new organization or pick one from the list to get started.",
         section: "setup" as const,
-        actionLabel: "Set up workspace"
+        actionLabel: "Get started"
       };
     }
 
     if (!selectedElectionId) {
       return {
-        title: "Create or select an election",
-        body: "Your next action is to define the election container before you can build a ballot.",
+        title: "Create or choose an election",
+        body: "Pick the election you want to work on before adding offices or candidates.",
         section: "setup" as const,
         actionLabel: "Create election"
       };
@@ -460,8 +530,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
 
     if (eligibleVoterCount === 0) {
       return {
-        title: "Assign at least one eligible voter",
-        body: "Members with the VOTER, ADMIN, or OWNER role can access ballots. Add or update members first.",
+        title: "Add voters",
+        body: "Give at least one member ballot access before you open voting.",
         section: "members" as const,
         actionLabel: "Manage members"
       };
@@ -469,8 +539,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
 
     if (currentOffices.length === 0) {
       return {
-        title: "Add offices to shape the ballot",
-        body: "Define the positions being contested so candidate entry and voting have a structure.",
+        title: "Add offices",
+        body: "Set up the roles voters will choose from.",
         section: "structure" as const,
         actionLabel: "Build the ballot"
       };
@@ -478,8 +548,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
 
     if (candidateCount === 0) {
       return {
-        title: "Add candidates to each office",
-        body: "The election structure exists, but voters still need candidate options before voting can open.",
+        title: "Add candidates",
+        body: "The offices are ready. Now add the candidates who will appear on the ballot.",
         section: "structure" as const,
         actionLabel: "Add candidates"
       };
@@ -487,27 +557,27 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
 
     if (electionDetail?.status !== "OPEN") {
       return {
-        title: "Open the election when the ballot is ready",
-        body: "Move the election to OPEN in Setup so members can cast ballots.",
+        title: "Open voting",
+        body: "When the ballot is ready, change the election status to OPEN.",
         section: "setup" as const,
-        actionLabel: "Review setup"
+        actionLabel: "Open election"
       };
     }
 
     if (!hasSubmittedBallot) {
       return {
-        title: "Voting is live",
-        body: "Switch to Vote to test the ballot experience or ask members to cast ballots.",
+        title: "Voting is open",
+        body: "You can review the ballot here or invite members to vote.",
         section: "vote" as const,
-        actionLabel: "Open ballot view"
+        actionLabel: "Open ballot"
       };
     }
 
     return {
-      title: "Review progress and results",
+      title: "Review progress",
       body: canManageSelectedOrganization
-        ? "The core workflow is active. Use Results and Audit to monitor tally health and sensitive actions."
-        : "The core workflow is active. Use Vote to confirm the ballot journey from a member perspective.",
+        ? "Voting is underway. Check results and the audit log as needed."
+        : "Voting is underway. Open the ballot view to review the flow.",
       section: canManageSelectedOrganization ? ("results" as const) : ("vote" as const),
       actionLabel: canManageSelectedOrganization ? "Review results" : "Revisit ballot"
     };
@@ -620,6 +690,21 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
     void loadElectionWorkspace(selectedOrganizationId, selectedElectionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedElectionId, selectedOrganizationId, session.token, canManageSelectedOrganization]);
+
+  useEffect(() => {
+    if (!selectedOrganizationId || !selectedElectionId || !canManageSelectedOrganization) {
+      setEligibilityRoster(null);
+      setImportPreview(null);
+      return;
+    }
+
+    void loadEligibilityRoster(
+      selectedOrganizationId,
+      selectedElectionId,
+      eligibilityFilter === "ALL" ? undefined : eligibilityFilter
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedElectionId, selectedOrganizationId, session.token, canManageSelectedOrganization, eligibilityFilter]);
 
   useEffect(() => {
     if (currentOffices.length === 0) {
@@ -773,6 +858,27 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
       setAuditLogs([]);
     } finally {
       setIsLoadingAuditLogs(false);
+    }
+  }
+
+  async function loadEligibilityRoster(
+    organizationId: string,
+    electionId: string,
+    status?: ElectionEligibilityStatus
+  ) {
+    setIsLoadingEligibility(true);
+
+    try {
+      const response = await listElectionEligibility(session.token, organizationId, electionId, status);
+      setEligibilityRoster(response);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to load the voter registry."
+      });
+      setEligibilityRoster(null);
+    } finally {
+      setIsLoadingEligibility(false);
     }
   }
 
@@ -1114,6 +1220,163 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
     }
   }
 
+  async function handlePreviewEligibilityImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedOrganizationId || !selectedElectionId) {
+      return;
+    }
+
+    if (!registryFile) {
+      setNotice({
+        tone: "error",
+        text: "Choose a CSV or XLSX file before previewing the voter registry."
+      });
+      return;
+    }
+
+    const format = resolveImportFormat(registryFile.name);
+
+    if (!format) {
+      setNotice({
+        tone: "error",
+        text: "Only CSV and XLSX files are supported for the voter registry."
+      });
+      return;
+    }
+
+    setActiveAction("preview-registry-import");
+    setNotice(null);
+
+    try {
+      const contentBase64 = await readFileAsBase64(registryFile);
+      const response = await previewElectionEligibilityImport(session.token, selectedOrganizationId, selectedElectionId, {
+        filename: registryFile.name,
+        format,
+        contentBase64
+      });
+
+      setImportPreview(response);
+      setNotice({
+        tone: "success",
+        text: `Preview ready. ${response.summary.acceptedCount} row${response.summary.acceptedCount === 1 ? "" : "s"} accepted and ${response.summary.rejectedCount} rejected.`
+      });
+    } catch (error) {
+      setImportPreview(null);
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to preview the voter registry."
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function handleCommitEligibilityImport() {
+    if (!selectedOrganizationId || !selectedElectionId || !importPreview) {
+      return;
+    }
+
+    setActiveAction("commit-registry-import");
+    setNotice(null);
+
+    try {
+      const response = await commitElectionEligibilityImport(
+        session.token,
+        selectedOrganizationId,
+        selectedElectionId,
+        importPreview.importId,
+        {}
+      );
+
+      setImportPreview(null);
+      setRegistryFile(null);
+      setImportInputKey((current) => current + 1);
+      setNotice({
+        tone: "success",
+        text: `Committed ${response.committedCount} voter registry row${response.committedCount === 1 ? "" : "s"}.`
+      });
+      await loadEligibilityRoster(
+        selectedOrganizationId,
+        selectedElectionId,
+        eligibilityFilter === "ALL" ? undefined : eligibilityFilter
+      );
+      await loadAuditLogs(selectedOrganizationId);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to commit the voter registry."
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function handleSendElectionInvites() {
+    if (!selectedOrganizationId || !selectedElectionId) {
+      return;
+    }
+
+    setActiveAction("send-election-invites");
+    setNotice(null);
+
+    try {
+      const response = await sendElectionInvitations(session.token, selectedOrganizationId, selectedElectionId);
+      setNotice({
+        tone: "success",
+        text: `${response.message} ${response.skippedCount > 0 ? `${response.skippedCount} record${response.skippedCount === 1 ? " was" : "s were"} skipped.` : ""}`.trim()
+      });
+      await loadEligibilityRoster(
+        selectedOrganizationId,
+        selectedElectionId,
+        eligibilityFilter === "ALL" ? undefined : eligibilityFilter
+      );
+      await loadAuditLogs(selectedOrganizationId);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to send election invites."
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function handleResendElectionInvite(eligibilityId: string) {
+    if (!selectedOrganizationId || !selectedElectionId) {
+      return;
+    }
+
+    setActiveAction(`resend-election-invite-${eligibilityId}`);
+    setNotice(null);
+
+    try {
+      const response = await resendElectionInvitation(
+        session.token,
+        selectedOrganizationId,
+        selectedElectionId,
+        eligibilityId
+      );
+      setNotice({
+        tone: "success",
+        text: response.message
+      });
+      await loadEligibilityRoster(
+        selectedOrganizationId,
+        selectedElectionId,
+        eligibilityFilter === "ALL" ? undefined : eligibilityFilter
+      );
+      await loadAuditLogs(selectedOrganizationId);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to resend the invite."
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
   const hasElectionWorkspace = Boolean(selectedElectionId && electionDetail);
   const selectedElectionSummary = elections.find((election) => election.id === selectedElectionId) ?? null;
   const sectionDisabled = (section: WorkspaceSection) =>
@@ -1126,9 +1389,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
   return (
     <PageShell>
       <PageHeader
-        eyebrow="Election command center"
-        title={`${session.user.firstName}, your workspace is ready.`}
-        description="Create organizations, configure elections, open voting windows, test the ballot flow, and inspect results and audit activity from one consistent control surface."
+        eyebrow="Workspace"
+        title={`${session.user.firstName}, here's your workspace.`}
+        description="Create organizations, set up elections, manage members, and review results in one place."
         actions={
           <>
             <Button onClick={() => void onRefreshProfile()} type="button" variant="outline">
@@ -1165,7 +1428,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
 
       <div className="grid gap-6 xl:grid-cols-[22rem_minmax(0,1fr)]">
         <div className="space-y-6">
-          <SectionCard title="Session" description="Identity and access for this signed-in account.">
+          <SectionCard title="Session" description="Account details for this signed-in user.">
             <div className="space-y-2">
               <p className="font-semibold">
                 {session.user.firstName} {session.user.lastName}
@@ -1180,7 +1443,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
 
           <SectionCard
             title="Create organization"
-            description="Start a new voting workspace with a light theme preset already attached."
+            description="Add a new organization and choose its starting theme."
           >
             <form className="space-y-4" onSubmit={handleCreateOrganization}>
               <div className="space-y-2">
@@ -1245,13 +1508,13 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
 
           <SectionCard
             title="Organizations"
-            description="Choose the organization context that should drive elections, members, and branding."
+            description="Choose the organization you're working on."
             action={isLoadingOrganizations ? <Badge variant="outline">Loading...</Badge> : undefined}
           >
             {organizations.length === 0 ? (
               <SharedEmptyState
                 title="No organizations yet"
-                body="Create your first organization to unlock the election workspace."
+                body="Create your first organization to get started."
               />
             ) : (
               <div className="space-y-3">
@@ -1296,13 +1559,13 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
           {!selectedOrganization ? (
             <EmptyPanel
               title="No organization selected"
-              body="Create an organization from the left or select one to begin configuring elections."
+              body="Create an organization or choose one from the list."
             />
           ) : (
             <>
               <SectionCard
                 title={selectedOrganization.name}
-                description={selectedOrganization.description ?? "Add elections, offices, and candidates for this organization."}
+                description={selectedOrganization.description ?? "Set up elections, members, and branding for this organization."}
                 action={
                   <div className="flex flex-wrap gap-2">
                     <Badge variant="outline">{selectedOrganization._count?.elections ?? elections.length} elections</Badge>
@@ -1316,7 +1579,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                     <CardContent className="space-y-4 p-6">
                       <div className="space-y-2">
                         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[color:var(--primary)]">
-                          Recommended next step
+                          Next step
                         </p>
                         <h3 className="font-[family:var(--font-heading)] text-3xl leading-tight">
                           {recommendedStep.title}
@@ -1370,7 +1633,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
               {canManageSelectedOrganization ? (
                 <SectionCard
                   title="Organization theme"
-                  description="Store the preset and approved token overrides for this organization. Changes apply immediately across the workspace and voter views."
+                  description="Choose the preset and approved colors for this organization. Changes show up right away."
                 >
                   <OrganizationThemeForm
                     value={themeForm}
@@ -1404,19 +1667,19 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                   {!selectedOrganization ? (
                     <EmptyPanel
                       title="No organization selected"
-                      body="Choose an organization first so you can manage members and voter eligibility."
+                      body="Choose an organization first."
                     />
                   ) : !canManageSelectedOrganization ? (
                     <EmptyPanel
-                      title="Member management is restricted"
-                      body="Only organization managers can invite members or adjust who is eligible to vote."
+                      title="Member access is restricted"
+                      body="Only organization managers can add members or change ballot access."
                     />
                   ) : (
                     <div className="space-y-6">
                       <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
                         <SectionCard
                           title="Invite or add member"
-                          description="New admins and voters can be created directly inside the selected organization."
+                          description="Add people to this organization and choose their role."
                           action={isLoadingMembers ? <Badge variant="outline">Refreshing...</Badge> : undefined}
                         >
                           <form className="grid gap-4 md:grid-cols-2" onSubmit={handleCreateMember}>
@@ -1492,14 +1755,14 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
 
                         <SectionCard
                           title="Role guide"
-                          description="Organization roles determine ballot access and management permissions."
+                          description="These roles control access and permissions."
                         >
                           <div className="grid gap-3">
                             {[
-                              ["Owner", "Full organization control, counted as manager, and eligible to vote."],
-                              ["Admin", "Can manage elections and members, and is also eligible to vote."],
-                              ["Voter", "Can access ballots but cannot manage organization settings."],
-                              ["Member", "Basic membership only. This role cannot access ballots."]
+                              ["Owner", "Full control of the organization, including voting access."],
+                              ["Admin", "Can manage elections and members, and can also vote."],
+                              ["Voter", "Can vote, but cannot manage organization settings."],
+                              ["Member", "Basic membership only. No ballot access."]
                             ].map(([title, body]) => (
                               <div
                                 key={title}
@@ -1515,12 +1778,12 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
 
                       <SectionCard
                         title="Organization roster"
-                        description="Managers, voters, and members currently attached to this organization."
+                        description="Everyone currently added to this organization."
                       >
                         {members.length === 0 ? (
                           <SharedEmptyState
                             title="No members yet"
-                            body="No members exist beyond the initial organization owner."
+                            body="Only the organization owner has been added so far."
                           />
                         ) : (
                           <div className="grid gap-4">
@@ -1570,6 +1833,269 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                           </div>
                         )}
                       </SectionCard>
+
+                      {!selectedElectionId ? (
+                        <EmptyPanel
+                          title="Choose an election"
+                          body="Pick an election in Setup before importing a voter registry or sending invites."
+                        />
+                      ) : (
+                        <>
+                          <div className="grid gap-6 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+                            <SectionCard
+                              title="Voter registry import"
+                              description="Upload a CSV or XLSX file with member_unique_id, full_name, age, and email."
+                              action={isLoadingEligibility ? <Badge variant="outline">Refreshing...</Badge> : undefined}
+                            >
+                              <form className="space-y-4" onSubmit={handlePreviewEligibilityImport}>
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium" htmlFor="registry-file">
+                                    Registry file
+                                  </label>
+                                  <Input
+                                    key={importInputKey}
+                                    id="registry-file"
+                                    accept=".csv,.xlsx"
+                                    type="file"
+                                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                                      setRegistryFile(event.target.files?.[0] ?? null)
+                                    }
+                                  />
+                                  <p className="text-sm text-[color:var(--muted-foreground)]">
+                                    {registryFile ? registryFile.name : "Choose a CSV or XLSX file to preview."}
+                                  </p>
+                                </div>
+
+                                <div className="flex flex-wrap gap-3">
+                                  <Button
+                                    disabled={activeAction === "preview-registry-import" || !registryFile}
+                                    type="submit"
+                                  >
+                                    {activeAction === "preview-registry-import" ? "Previewing..." : "Preview registry"}
+                                  </Button>
+                                  {importPreview ? (
+                                    <Button
+                                      disabled={activeAction === "commit-registry-import"}
+                                      onClick={() => void handleCommitEligibilityImport()}
+                                      type="button"
+                                      variant="outline"
+                                    >
+                                      {activeAction === "commit-registry-import" ? "Committing..." : "Commit accepted rows"}
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              </form>
+
+                              {importPreview ? (
+                                <div className="space-y-4">
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <MetricCard label="Accepted rows" value={importPreview.summary.acceptedCount} />
+                                    <MetricCard label="Rejected rows" value={importPreview.summary.rejectedCount} />
+                                  </div>
+
+                                  <div className="grid gap-4 xl:grid-cols-2">
+                                    <div className="space-y-3">
+                                      <p className="text-sm font-medium">Accepted rows</p>
+                                      {importPreview.acceptedRows.length === 0 ? (
+                                        <div className="rounded-[calc(var(--radius)-0.25rem)] border border-dashed border-[color:var(--border)] p-4 text-sm text-[color:var(--muted-foreground)]">
+                                          No valid rows yet.
+                                        </div>
+                                      ) : (
+                                        importPreview.acceptedRows.slice(0, 8).map((row) => (
+                                          <div
+                                            key={`accepted-${row.rowNumber}-${row.memberUniqueId}`}
+                                            className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-white p-4"
+                                          >
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <Badge variant="outline">Row {row.rowNumber}</Badge>
+                                              <p className="font-semibold">{row.fullName}</p>
+                                            </div>
+                                            <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">
+                                              {row.memberUniqueId} · {row.email} · Age {row.age}
+                                            </p>
+                                          </div>
+                                        ))
+                                      )}
+                                      {importPreview.acceptedRows.length > 8 ? (
+                                        <p className="text-sm text-[color:var(--muted-foreground)]">
+                                          Showing the first 8 accepted rows.
+                                        </p>
+                                      ) : null}
+                                    </div>
+
+                                    <div className="space-y-3">
+                                      <p className="text-sm font-medium">Rejected rows</p>
+                                      {importPreview.rejectedRows.length === 0 ? (
+                                        <div className="rounded-[calc(var(--radius)-0.25rem)] border border-dashed border-[color:var(--border)] p-4 text-sm text-[color:var(--muted-foreground)]">
+                                          No row errors found.
+                                        </div>
+                                      ) : (
+                                        importPreview.rejectedRows.slice(0, 8).map((row) => (
+                                          <div
+                                            key={`rejected-${row.rowNumber}`}
+                                            className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--warning)]/30 bg-[color:var(--warning)]/10 p-4"
+                                          >
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <Badge variant="outline">Row {row.rowNumber}</Badge>
+                                              <p className="font-semibold">
+                                                {row.values.full_name ?? row.values.member_unique_id ?? "Row error"}
+                                              </p>
+                                            </div>
+                                            <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">
+                                              {row.errors.join(" ")}
+                                            </p>
+                                          </div>
+                                        ))
+                                      )}
+                                      {importPreview.rejectedRows.length > 8 ? (
+                                        <p className="text-sm text-[color:var(--muted-foreground)]">
+                                          Showing the first 8 rejected rows.
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </SectionCard>
+
+                            <SectionCard
+                              title="Election eligibility"
+                              description="Review the voter registry for the selected election and send invite emails."
+                              action={
+                                <div className="flex flex-wrap gap-2">
+                                  <Badge variant="outline">{selectedElectionSummary?.title ?? "Election selected"}</Badge>
+                                  <Button
+                                    disabled={activeAction === "send-election-invites" || !eligibilityRoster}
+                                    onClick={() => void handleSendElectionInvites()}
+                                    type="button"
+                                    variant="outline"
+                                  >
+                                    {activeAction === "send-election-invites" ? "Sending..." : "Send invites"}
+                                  </Button>
+                                </div>
+                              }
+                            >
+                              {!eligibilityRoster ? (
+                                <SharedEmptyState
+                                  title="No voter registry yet"
+                                  body="Import and commit a voter registry to start managing election eligibility."
+                                />
+                              ) : (
+                                <div className="space-y-5">
+                                  <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+                                    <MetricCard label="Eligible" value={eligibilityRoster.summary.importedEligibleCount} />
+                                    <MetricCard label="Invites sent" value={eligibilityRoster.summary.invitesSentCount} />
+                                    <MetricCard label="Claimed" value={eligibilityRoster.summary.claimedCount} />
+                                    <MetricCard label="Voted" value={eligibilityRoster.summary.votedCount} />
+                                    <MetricCard label="Revoked" value={eligibilityRoster.summary.revokedCount} />
+                                    <MetricCard label="Expired" value={eligibilityRoster.summary.expiredCount} />
+                                  </div>
+
+                                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                    <div className="space-y-1">
+                                      <p className="text-sm font-medium">Filter by status</p>
+                                      <p className="text-sm text-[color:var(--muted-foreground)]">
+                                        Ballots submitted: {eligibilityRoster.summary.ballotsSubmitted}
+                                      </p>
+                                    </div>
+                                    <Select
+                                      value={eligibilityFilter}
+                                      onValueChange={(value) => setEligibilityFilter(value as EligibilityFilterValue)}
+                                    >
+                                      <SelectTrigger className="w-full md:w-56">
+                                        <SelectValue placeholder="Filter status" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {eligibilityStatusOptions.map((status) => (
+                                          <SelectItem key={status} value={status}>
+                                            {status === "ALL" ? "All statuses" : toTitleCase(status)}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  {eligibilityRoster.eligibilities.length === 0 ? (
+                                    <div className="rounded-[calc(var(--radius)-0.25rem)] border border-dashed border-[color:var(--border)] p-6 text-sm text-[color:var(--muted-foreground)]">
+                                      No records match this filter yet.
+                                    </div>
+                                  ) : (
+                                    <div className="grid gap-4">
+                                      {eligibilityRoster.eligibilities.map((eligibility) => (
+                                        <Card key={eligibility.id} className="border-white/70 bg-white/95">
+                                          <CardContent className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
+                                            <div className="space-y-2">
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <p className="font-semibold">{eligibility.fullName}</p>
+                                                <StatusPill status={eligibility.status} />
+                                                <Badge variant="outline">{eligibility.memberUniqueId}</Badge>
+                                              </div>
+                                              <p className="text-sm text-[color:var(--muted-foreground)]">
+                                                {eligibility.email} · Age {eligibility.age}
+                                              </p>
+                                              <div className="flex flex-wrap gap-2">
+                                                {eligibility.importJob ? (
+                                                  <Badge variant="outline">
+                                                    {eligibility.importJob.filename} · {eligibility.importJob.sourceFormat}
+                                                  </Badge>
+                                                ) : null}
+                                                {eligibility.latestInvite?.sentAt ? (
+                                                  <Badge variant="outline">
+                                                    Sent {formatDateTime(eligibility.latestInvite.sentAt)}
+                                                  </Badge>
+                                                ) : (
+                                                  <Badge variant="outline">Not sent yet</Badge>
+                                                )}
+                                                {eligibility.claimedAt ? (
+                                                  <Badge variant="outline">Claimed {formatDateTime(eligibility.claimedAt)}</Badge>
+                                                ) : null}
+                                                {eligibility.votedAt ? (
+                                                  <Badge variant="outline">Voted {formatDateTime(eligibility.votedAt)}</Badge>
+                                                ) : null}
+                                              </div>
+                                            </div>
+                                            <div className="space-y-3">
+                                              <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/50 p-4">
+                                                <p className="text-sm text-[color:var(--muted-foreground)]">
+                                                  {eligibility.latestInvite
+                                                    ? eligibility.latestInvite.revokedAt
+                                                      ? "Latest invite was revoked."
+                                                      : eligibility.latestInvite.usedAt
+                                                        ? "Latest invite has been used."
+                                                        : `Invite expires ${formatDateTime(eligibility.latestInvite.expiresAt)}.`
+                                                    : "No invite has been sent yet."}
+                                                </p>
+                                              </div>
+                                              <div className="flex flex-wrap gap-2">
+                                                <Button
+                                                  disabled={
+                                                    activeAction === `resend-election-invite-${eligibility.id}` ||
+                                                    ["CLAIMED", "VOTED", "REVOKED", "EXPIRED"].includes(eligibility.status)
+                                                  }
+                                                  onClick={() => void handleResendElectionInvite(eligibility.id)}
+                                                  type="button"
+                                                  variant="outline"
+                                                >
+                                                  {activeAction === `resend-election-invite-${eligibility.id}` ? "Resending..." : eligibility.latestInvite?.sentAt ? "Resend invite" : "Send invite"}
+                                                </Button>
+                                              </div>
+                                              {eligibility.latestInvite?.revokedAt ? (
+                                                <p className="text-sm text-[color:var(--muted-foreground)]">
+                                                  Invite revoked {formatDateTime(eligibility.latestInvite.revokedAt)}.
+                                                </p>
+                                              ) : null}
+                                            </div>
+                                          </CardContent>
+                                        </Card>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </SectionCard>
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
                 </TabsContent>
@@ -1578,7 +2104,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                   <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
                     <SectionCard
                       title="Election setup"
-                      description="Create elections and switch the active context for the rest of the workflow."
+                      description="Create elections and choose the one you want to work on."
                       action={isLoadingElections ? <Badge variant="outline">Refreshing...</Badge> : undefined}
                     >
                       <form className="space-y-4" onSubmit={handleCreateElection}>
@@ -1674,12 +2200,12 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                     {!selectedElectionId || !electionDetail ? (
                       <EmptyPanel
                         title="Select an election"
-                        body="Choose an election from the list to manage offices, candidates, ballots, and results."
+                        body="Choose an election to manage offices, candidates, ballots, and results."
                       />
                     ) : (
                       <SectionCard
                         title={electionDetail.title}
-                        description={electionDetail.description ?? "No election description has been provided yet."}
+                        description={electionDetail.description ?? "No description yet."}
                         action={<StatusPill status={electionDetail.status} />}
                       >
                         <div className="grid gap-3 md:grid-cols-3">
@@ -1721,7 +2247,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                         {selectedElectionSummary ? (
                           <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-white p-4">
                             <p className="text-sm text-[color:var(--muted-foreground)]">
-                              The selected election currently exposes {selectedElectionSummary._count?.offices ?? 0} offices to the rest of the workspace.
+                              This election currently has {selectedElectionSummary._count?.offices ?? 0} office{selectedElectionSummary._count?.offices === 1 ? "" : "s"} in the workspace.
                             </p>
                           </div>
                         ) : null}
@@ -1733,14 +2259,14 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                 <TabsContent value="structure">
                   {!hasElectionWorkspace || !electionDetail ? (
                     <EmptyPanel
-                      title="Election structure is empty"
-                      body="Select an election in Setup to create offices and candidates."
+                      title="No election selected"
+                      body="Choose an election in Setup to add offices and candidates."
                     />
                   ) : (
                     <div className="space-y-6">
                       {canManageSelectedOrganization ? (
                         <div className="grid gap-6 xl:grid-cols-2">
-                          <SectionCard title="Create office" description="Define the ballot positions that voters will see.">
+                          <SectionCard title="Create office" description="Add the offices voters will choose from.">
                             <form className="space-y-4" onSubmit={handleCreateOffice}>
                               <div className="space-y-2">
                                 <label className="text-sm font-medium" htmlFor="office-title">
@@ -1795,7 +2321,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                             </form>
                           </SectionCard>
 
-                          <SectionCard title="Create candidate" description="Attach a candidate profile to an office on the current ballot.">
+                          <SectionCard title="Create candidate" description="Add a candidate to an office on this ballot.">
                             <form className="space-y-4" onSubmit={handleCreateCandidate}>
                               <div className="space-y-2">
                                 <label className="text-sm font-medium">Office</label>
@@ -1863,7 +2389,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
 
                       <SectionCard
                         title="Offices and candidates"
-                        description="This is the live ballot structure that voters will experience."
+                        description="This is what voters will see on the ballot."
                         action={isLoadingElectionWorkspace ? <Badge variant="outline">Refreshing...</Badge> : undefined}
                       >
                         {electionDetail.offices.length === 0 ? (
@@ -1880,7 +2406,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                                     <div>
                                       <h3 className="font-[family:var(--font-heading)] text-2xl">{office.title}</h3>
                                       <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                                        {office.description ?? "No office description yet."}
+                                        {office.description ?? "No description yet."}
                                       </p>
                                     </div>
                                     <Badge variant="outline">
@@ -1900,7 +2426,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                                         >
                                           <p className="font-semibold">{candidate.displayName}</p>
                                           <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                                            {candidate.bio ?? "No bio supplied."}
+                                            {candidate.bio ?? "No bio yet."}
                                           </p>
                                         </div>
                                       ))
@@ -1920,17 +2446,17 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                   {!hasElectionWorkspace ? (
                     <EmptyPanel
                       title="No ballot available yet"
-                      body="Create and select an election in Setup before opening voting."
+                      body="Create and select an election before opening voting."
                     />
                   ) : !ballotState ? (
                     <EmptyPanel
-                      title="Ballot is still loading"
-                      body="The current election context has not finished loading the ballot view."
+                      title="Loading ballot"
+                      body="The ballot is still loading for this election."
                     />
                   ) : ballotState.offices.length === 0 ? (
                     <EmptyPanel
-                      title="This election has no ballot yet"
-                      body="Add offices and candidates in Structure before asking members to vote."
+                      title="No ballot yet"
+                      body="Add offices and candidates before asking members to vote."
                     />
                   ) : (
                     <form className="space-y-6" onSubmit={handleSubmitBallot}>
@@ -1938,7 +2464,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                         <div className="space-y-6">
                           <SectionCard
                             title={ballotState.election.title}
-                            description={ballotState.election.description ?? "No election description has been provided yet."}
+                            description={ballotState.election.description ?? "No description yet."}
                             action={<StatusPill status={ballotState.election.status} />}
                           >
                             <div className="grid gap-3 md:grid-cols-3">
@@ -1962,7 +2488,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                             <SectionCard
                               key={office.id}
                               title={office.title}
-                              description={office.description ?? "No office description provided."}
+                              description={office.description ?? "No description yet."}
                               action={<Badge variant="outline">{office.seats} seat{office.seats === 1 ? "" : "s"}</Badge>}
                             >
                               <div className="mb-1">
@@ -1970,7 +2496,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                                   isActive={!ballotSelections[office.id]}
                                   isComplete={Boolean(ballotSelections[office.id])}
                                   label={`Step ${index + 1}`}
-                                  meta={ballotSelections[office.id] ? "Selection recorded" : "Choose one candidate"}
+                                  meta={ballotSelections[office.id] ? "Selected" : "Choose one candidate"}
                                 />
                               </div>
                               <RadioGroup
@@ -2006,7 +2532,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                                           {isSelected ? <Badge variant="outline">Selected</Badge> : null}
                                         </div>
                                         <p className="text-sm text-[color:var(--muted-foreground)]">
-                                          {candidate.bio ?? "No candidate bio supplied."}
+                                          {candidate.bio ?? "No bio yet."}
                                         </p>
                                       </div>
                                     </label>
@@ -2018,13 +2544,13 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                         </div>
 
                         <ReviewPanel
-                          title="Before submission"
+                          title="Review ballot"
                           subtitle={
                             ballotState.ballot
-                              ? "This account has already submitted a ballot for the selected election."
+                              ? "This account has already submitted a ballot for this election."
                               : ballotIsOpen
-                                ? "Review every office carefully before you submit."
-                                : "Voting is disabled until the election status becomes OPEN."
+                                ? "Check your choices before you submit."
+                                : "Voting is disabled until this election is OPEN."
                           }
                           progress={ballotCompletionPercent}
                           stats={[
@@ -2054,8 +2580,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                           }
                           notes={
                             ballotState.ballot
-                              ? "This ballot has already been recorded for the selected election."
-                              : "Each office remains visually separate so it is easier to verify intent before submission."
+                              ? "This ballot has already been recorded."
+                              : "You can only submit one ballot for this election."
                           }
                         />
                       </div>
@@ -2067,7 +2593,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                   {!hasElectionWorkspace ? (
                     <EmptyPanel
                       title="No results to display"
-                      body="Select an election in Setup to review vote counts and candidate standings."
+                      body="Choose an election to view results."
                     />
                   ) : resultsError ? (
                     <Alert>
@@ -2075,9 +2601,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                       <AlertDescription>{resultsError}</AlertDescription>
                     </Alert>
                   ) : !results || results.offices.length === 0 ? (
-                    <EmptyPanel title="No counted results yet" body="No votes have been counted for the selected election." />
+                    <EmptyPanel title="No results yet" body="No votes have been counted for this election." />
                   ) : (
-                    <SectionCard title="Results" description="Manager-facing tally for the selected election.">
+                    <SectionCard title="Results" description="Vote totals for this election.">
                       <div className="grid gap-4">
                         {results.offices.map((office) => (
                           <Card key={office.officeId} className="border-white/70 bg-white/95">
@@ -2131,21 +2657,21 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                   {!selectedOrganization ? (
                     <EmptyPanel
                       title="No organization selected"
-                      body="Choose an organization before viewing its audit activity."
+                      body="Choose an organization to view its audit log."
                     />
                   ) : !canManageSelectedOrganization ? (
                     <EmptyPanel
                       title="Audit access is restricted"
-                      body="Only organization managers can inspect audit events for security-sensitive actions."
+                      body="Only organization managers can view the audit log."
                     />
                   ) : (
                     <SectionCard
                       title="Audit log"
-                      description="Recent sensitive actions across the organization. Ballot choices themselves are never stored here."
+                      description="Recent actions across the organization. Ballot choices are never stored here."
                       action={isLoadingAuditLogs ? <Badge variant="outline">Refreshing...</Badge> : undefined}
                     >
                       {auditLogs.length === 0 ? (
-                        <SharedEmptyState title="No recent audit events yet" body="Activity will appear here as managers and voters use the workspace." />
+                        <SharedEmptyState title="No recent activity yet" body="Activity will appear here as people use the app." />
                       ) : (
                         <div className="grid gap-4">
                           {auditLogs.map((log) => (
