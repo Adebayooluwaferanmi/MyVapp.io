@@ -323,6 +323,39 @@ function ReadinessItem({
   );
 }
 
+function NavigationCard({
+  active,
+  description,
+  disabled = false,
+  label,
+  onClick
+}: {
+  active: boolean;
+  description: string;
+  disabled?: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`rounded-[var(--radius)] border p-4 text-left transition ${
+        active
+          ? "border-[color:var(--primary)]/35 bg-[color:var(--secondary)]/70"
+          : "border-[color:var(--border)] bg-white hover:bg-[color:var(--muted)]/60"
+      } disabled:cursor-not-allowed disabled:opacity-50`}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-semibold">{label}</p>
+        {active ? <Badge variant="outline">Current</Badge> : null}
+      </div>
+      <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">{description}</p>
+    </button>
+  );
+}
+
 export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeChange, session }: WorkspaceProps) {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [members, setMembers] = useState<OrganizationMember[]>([]);
@@ -1377,6 +1410,17 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
     }
   }
 
+  function openWorkspaceSection(section: WorkspaceSection) {
+    setActiveSection(section);
+
+    window.requestAnimationFrame(() => {
+      document.getElementById("workspace-sections")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+    });
+  }
+
   const hasElectionWorkspace = Boolean(selectedElectionId && electionDetail);
   const selectedElectionSummary = elections.find((election) => election.id === selectedElectionId) ?? null;
   const sectionDisabled = (section: WorkspaceSection) =>
@@ -1425,6 +1469,33 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
           <AlertDescription>{notice.text}</AlertDescription>
         </Alert>
       ) : null}
+
+      <SectionCard
+        title="Workspace navigation"
+        description="Jump straight to the area you want to use."
+        action={<Badge variant="outline">Current: {sectionLabelMap[activeSection]}</Badge>}
+      >
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {workspaceSections.map((section) => (
+            <NavigationCard
+              key={section}
+              active={activeSection === section}
+              description={
+                sectionDisabled(section)
+                  ? section === "setup"
+                    ? sectionHintMap[section]
+                    : section === "members" || section === "audit"
+                      ? "Choose an organization first."
+                      : "Choose an organization and election first."
+                  : sectionHintMap[section]
+              }
+              disabled={sectionDisabled(section)}
+              label={sectionLabelMap[section]}
+              onClick={() => openWorkspaceSection(section)}
+            />
+          ))}
+        </div>
+      </SectionCard>
 
       <div className="grid gap-6 xl:grid-cols-[22rem_minmax(0,1fr)]">
         <div className="space-y-6">
@@ -1595,11 +1666,11 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                         <Badge variant="outline">{eligibleVoterCount} eligible voters</Badge>
                       </div>
                       <div className="flex flex-wrap gap-3">
-                        <Button onClick={() => setActiveSection(recommendedStep.section)} type="button">
+                        <Button onClick={() => openWorkspaceSection(recommendedStep.section)} type="button">
                           {recommendedStep.actionLabel}
                         </Button>
                         {selectedElectionId ? (
-                          <Button onClick={() => setActiveSection("setup")} type="button" variant="outline">
+                          <Button onClick={() => openWorkspaceSection("setup")} type="button" variant="outline">
                             Review election status
                           </Button>
                         ) : null}
@@ -1623,7 +1694,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                       isDisabled={card.disabled}
                       label={sectionLabelMap[card.section]}
                       meta={card.meta}
-                      onClick={() => setActiveSection(card.section)}
+                      onClick={() => openWorkspaceSection(card.section)}
                       tone={card.tone}
                     />
                   ))}
@@ -1644,26 +1715,27 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                 </SectionCard>
               ) : null}
 
-              <Tabs value={activeSection} onValueChange={(value) => setActiveSection(value as WorkspaceSection)}>
-                <SectionCard
-                  title="Election lifecycle"
-                  description={sectionHintMap[activeSection]}
-                >
-                  <TabsList className="grid w-full gap-2 bg-transparent p-0 md:grid-cols-3 xl:grid-cols-6">
-                    {workspaceSections.map((section) => (
-                      <TabsTrigger
-                        key={section}
-                        value={section}
-                        disabled={sectionDisabled(section)}
-                        className="border border-[color:var(--border)] bg-white data-[state=active]:border-[color:var(--primary)]/30 data-[state=active]:bg-[color:var(--secondary)]/70 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {sectionLabelMap[section]}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                </SectionCard>
+              <div id="workspace-sections">
+                <Tabs value={activeSection} onValueChange={(value) => setActiveSection(value as WorkspaceSection)}>
+                  <SectionCard
+                    title="Election lifecycle"
+                    description={sectionHintMap[activeSection]}
+                  >
+                    <TabsList className="grid w-full gap-2 bg-transparent p-0 md:grid-cols-3 xl:grid-cols-6">
+                      {workspaceSections.map((section) => (
+                        <TabsTrigger
+                          key={section}
+                          value={section}
+                          disabled={sectionDisabled(section)}
+                          className="border border-[color:var(--border)] bg-white data-[state=active]:border-[color:var(--primary)]/30 data-[state=active]:bg-[color:var(--secondary)]/70 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {sectionLabelMap[section]}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </SectionCard>
 
-                <TabsContent value="members">
+                  <TabsContent value="members">
                   {!selectedOrganization ? (
                     <EmptyPanel
                       title="No organization selected"
@@ -2098,9 +2170,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                       )}
                     </div>
                   )}
-                </TabsContent>
+                  </TabsContent>
 
-                <TabsContent value="setup">
+                  <TabsContent value="setup">
                   <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
                     <SectionCard
                       title="Election setup"
@@ -2254,9 +2326,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                       </SectionCard>
                     )}
                   </div>
-                </TabsContent>
+                  </TabsContent>
 
-                <TabsContent value="structure">
+                  <TabsContent value="structure">
                   {!hasElectionWorkspace || !electionDetail ? (
                     <EmptyPanel
                       title="No election selected"
@@ -2440,9 +2512,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                       </SectionCard>
                     </div>
                   )}
-                </TabsContent>
+                  </TabsContent>
 
-                <TabsContent value="vote">
+                  <TabsContent value="vote">
                   {!hasElectionWorkspace ? (
                     <EmptyPanel
                       title="No ballot available yet"
@@ -2587,9 +2659,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                       </div>
                     </form>
                   )}
-                </TabsContent>
+                  </TabsContent>
 
-                <TabsContent value="results">
+                  <TabsContent value="results">
                   {!hasElectionWorkspace ? (
                     <EmptyPanel
                       title="No results to display"
@@ -2651,9 +2723,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                       </div>
                     </SectionCard>
                   )}
-                </TabsContent>
+                  </TabsContent>
 
-                <TabsContent value="audit">
+                  <TabsContent value="audit">
                   {!selectedOrganization ? (
                     <EmptyPanel
                       title="No organization selected"
@@ -2708,8 +2780,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                       )}
                     </SectionCard>
                   )}
-                </TabsContent>
-              </Tabs>
+                  </TabsContent>
+                </Tabs>
+              </div>
             </>
           )}
         </div>

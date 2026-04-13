@@ -34,6 +34,8 @@ type Notice = {
   text: string;
 };
 
+type PortalSectionId = "portal-access" | "portal-elections" | "portal-ballot" | "portal-review";
+
 function toTitleCase(value: string) {
   return value
     .toLowerCase()
@@ -55,6 +57,36 @@ function formatDateTime(value: string | null | undefined): string {
   } catch {
     return value;
   }
+}
+
+function PortalNavCard({
+  active = false,
+  description,
+  label,
+  onClick
+}: {
+  active?: boolean;
+  description: string;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`rounded-[var(--radius)] border p-4 text-left transition ${
+        active
+          ? "border-[color:var(--primary)]/35 bg-[color:var(--secondary)]/70"
+          : "border-[color:var(--border)] bg-white hover:bg-[color:var(--muted)]/60"
+      }`}
+      onClick={onClick}
+      type="button"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-semibold">{label}</p>
+        {active ? <Badge variant="outline">Current</Badge> : null}
+      </div>
+      <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">{description}</p>
+    </button>
+  );
 }
 
 export function VoterPortal({
@@ -301,6 +333,13 @@ export function VoterPortal({
     }
   }
 
+  function scrollToPortalSection(sectionId: PortalSectionId) {
+    document.getElementById(sectionId)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+  }
+
   return (
     <PageShell>
       <PageHeader
@@ -362,20 +401,54 @@ export function VoterPortal({
         </Alert>
       ) : null}
 
+      <SectionCard
+        title="Portal navigation"
+        description="Move between your access details, election list, ballot, and review panel."
+      >
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <PortalNavCard
+            active={!selectedOrganization}
+            description={selectedOrganization ? selectedOrganization.name : "Choose your organization first."}
+            label="Access"
+            onClick={() => scrollToPortalSection("portal-access")}
+          />
+          <PortalNavCard
+            active={Boolean(selectedOrganization) && !selectedElection}
+            description={selectedElection ? selectedElection.title : "See open and recent elections."}
+            label="Elections"
+            onClick={() => scrollToPortalSection("portal-elections")}
+          />
+          <PortalNavCard
+            active={Boolean(selectedElection)}
+            description={selectedElection ? "Review offices and make your selections." : "Choose an election to open the ballot."}
+            label="Ballot"
+            onClick={() => scrollToPortalSection("portal-ballot")}
+          />
+          <PortalNavCard
+            active={hasSubmittedBallot}
+            description={hasSubmittedBallot ? "Your ballot has been submitted." : "Check your choices before you submit."}
+            label="Review"
+            onClick={() => scrollToPortalSection("portal-review")}
+          />
+        </div>
+      </SectionCard>
+
       <div className="grid gap-6 xl:grid-cols-[20rem_minmax(0,1fr)]">
         <aside className="space-y-6 xl:sticky xl:top-24 xl:self-start">
-          <SectionCard title="Your access" description={session.user.email}>
-            <div className="space-y-1">
-              <p className="font-[family:var(--font-heading)] text-3xl">
-                {session.user.firstName} {session.user.lastName}
-              </p>
-              <p className="text-sm text-[color:var(--muted-foreground)]">Your voter account</p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-              <MetricCard label="Organizations" value={organizations.length} />
-              <MetricCard label="Open elections" value={openElections.length} />
-            </div>
-          </SectionCard>
+          <div id="portal-access">
+            <SectionCard title="Your access" description={session.user.email}>
+              <div className="space-y-1">
+                <p className="font-[family:var(--font-heading)] text-3xl">
+                  {session.user.firstName} {session.user.lastName}
+                </p>
+                <p className="text-sm text-[color:var(--muted-foreground)]">Your voter account</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                <MetricCard label="Organizations" value={organizations.length} />
+                <MetricCard label="Open elections" value={openElections.length} />
+              </div>
+            </SectionCard>
+          </div>
 
           <SectionCard title="Organizations" description={isLoadingOrganizations ? "Loading organizations..." : "Choose an organization."}>
             {organizations.length === 0 ? (
@@ -407,49 +480,51 @@ export function VoterPortal({
             )}
           </SectionCard>
 
-          <SectionCard title="Elections" description={isLoadingElections ? "Refreshing elections..." : "Open elections are shown first."}>
-            {elections.length === 0 ? (
-              <p className="text-sm text-[color:var(--muted-foreground)]">No elections available for this organization yet.</p>
-            ) : (
-              <div className="space-y-4">
-                {[
-                  { groupTitle: "Open now", items: openElections },
-                  { groupTitle: "Other elections", items: completedElections }
-                ].map(({ groupTitle, items }) =>
-                  items.length > 0 ? (
-                    <div key={groupTitle} className="space-y-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--muted-foreground)]">
-                        {groupTitle}
-                      </p>
-                      <div className="space-y-3">
-                        {items.map((election) => (
-                          <button
-                            key={election.id}
-                            className={`w-full rounded-[calc(var(--radius)-0.125rem)] border p-4 text-left transition ${
-                              election.id === selectedElectionId
-                                ? "border-[color:var(--primary)]/40 bg-[color:var(--secondary)]/70"
-                                : "border-[color:var(--border)] bg-white hover:bg-[color:var(--muted)]/70"
-                            }`}
-                            onClick={() => setSelectedElectionId(election.id)}
-                            type="button"
-                          >
-                            <p className="font-semibold">{election.title}</p>
-                            <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                              {election.description ?? "No description yet."}
-                            </p>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <StatusBadge status={election.status} />
-                              <Badge variant="outline">{election._count?.offices ?? 0} offices</Badge>
-                            </div>
-                          </button>
-                        ))}
+          <div id="portal-elections">
+            <SectionCard title="Elections" description={isLoadingElections ? "Refreshing elections..." : "Open elections are shown first."}>
+              {elections.length === 0 ? (
+                <p className="text-sm text-[color:var(--muted-foreground)]">No elections available for this organization yet.</p>
+              ) : (
+                <div className="space-y-4">
+                  {[
+                    { groupTitle: "Open now", items: openElections },
+                    { groupTitle: "Other elections", items: completedElections }
+                  ].map(({ groupTitle, items }) =>
+                    items.length > 0 ? (
+                      <div key={groupTitle} className="space-y-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--muted-foreground)]">
+                          {groupTitle}
+                        </p>
+                        <div className="space-y-3">
+                          {items.map((election) => (
+                            <button
+                              key={election.id}
+                              className={`w-full rounded-[calc(var(--radius)-0.125rem)] border p-4 text-left transition ${
+                                election.id === selectedElectionId
+                                  ? "border-[color:var(--primary)]/40 bg-[color:var(--secondary)]/70"
+                                  : "border-[color:var(--border)] bg-white hover:bg-[color:var(--muted)]/70"
+                              }`}
+                              onClick={() => setSelectedElectionId(election.id)}
+                              type="button"
+                            >
+                              <p className="font-semibold">{election.title}</p>
+                              <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                                {election.description ?? "No description yet."}
+                              </p>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <StatusBadge status={election.status} />
+                                <Badge variant="outline">{election._count?.offices ?? 0} offices</Badge>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  ) : null
-                )}
-              </div>
-            )}
-          </SectionCard>
+                    ) : null
+                  )}
+                </div>
+              )}
+            </SectionCard>
+          </div>
         </aside>
 
         <div className="space-y-6">
@@ -465,7 +540,7 @@ export function VoterPortal({
             />
           ) : (
             <>
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
+              <div id="portal-ballot" className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
                 <SectionCard
                   title={selectedElection.title}
                   description={selectedElection.description ?? "No description yet."}
@@ -562,44 +637,46 @@ export function VoterPortal({
                       ))}
                     </div>
 
-                    <ReviewPanel
-                      title="Review your ballot"
-                      subtitle="Check your choices before you submit."
-                      progress={completionPercent}
-                      stats={[
-                        {
-                          label: "Completed",
-                          value: `${selectedCount}/${totalOffices}`
-                        },
-                        {
-                          label: "Election state",
-                          value: toTitleCase(ballotState.election.status)
-                        }
-                      ]}
-                      items={reviewItems}
-                      actions={
-                        <Button
-                          className="w-full"
-                          disabled={
-                            activeAction === "submit-ballot" ||
-                            hasSubmittedBallot ||
-                            ballotState.election.status !== "OPEN"
+                    <div id="portal-review">
+                      <ReviewPanel
+                        title="Review your ballot"
+                        subtitle="Check your choices before you submit."
+                        progress={completionPercent}
+                        stats={[
+                          {
+                            label: "Completed",
+                            value: `${selectedCount}/${totalOffices}`
+                          },
+                          {
+                            label: "Election state",
+                            value: toTitleCase(ballotState.election.status)
                           }
-                          type="submit"
-                        >
-                          {hasSubmittedBallot
-                            ? "Ballot submitted"
-                            : activeAction === "submit-ballot"
-                              ? "Submitting..."
-                              : "Submit ballot"}
-                        </Button>
-                      }
-                      notes={
-                        hasSubmittedBallot
-                          ? "Your vote has been recorded."
-                          : "You can only submit once for this election."
-                      }
-                    />
+                        ]}
+                        items={reviewItems}
+                        actions={
+                          <Button
+                            className="w-full"
+                            disabled={
+                              activeAction === "submit-ballot" ||
+                              hasSubmittedBallot ||
+                              ballotState.election.status !== "OPEN"
+                            }
+                            type="submit"
+                          >
+                            {hasSubmittedBallot
+                              ? "Ballot submitted"
+                              : activeAction === "submit-ballot"
+                                ? "Submitting..."
+                                : "Submit ballot"}
+                          </Button>
+                        }
+                        notes={
+                          hasSubmittedBallot
+                            ? "Your vote has been recorded."
+                            : "You can only submit once for this election."
+                        }
+                      />
+                    </div>
                   </form>
                 )}
               </SectionCard>
