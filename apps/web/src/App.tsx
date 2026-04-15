@@ -2,6 +2,7 @@ import { CheckCircle2, LayoutPanelTop, ShieldCheck, Vote } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AuthCard } from "@/components/AuthCard";
+import { PublicClaimPage } from "@/components/PublicClaimPage";
 import { VoterPortal } from "@/components/VoterPortal";
 import { Workspace } from "@/components/Workspace";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +38,18 @@ function connectionTone(message: string) {
   }
 
   return "warning" as const;
+}
+
+function getPublicClaimRoute(pathname: string) {
+  const match = pathname.match(/^\/claim\/([^/]+)\/?$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    electionSlug: decodeURIComponent(match[1])
+  };
 }
 
 function SiteHeader({
@@ -96,6 +109,7 @@ export default function App() {
   const [session, setSession] = useState<StoredSession | null>(() => getStoredSession());
   const [healthMessage, setHealthMessage] = useState("Checking connection...");
   const { setTheme } = useAppTheme();
+  const publicClaimRoute = getPublicClaimRoute(window.location.pathname);
 
   useEffect(() => {
     getHealthStatus()
@@ -176,6 +190,22 @@ export default function App() {
               session={session}
             />
           )}
+        </main>
+        <SiteFooter />
+      </div>
+    );
+  }
+
+  if (publicClaimRoute) {
+    return (
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,color-mix(in_srgb,var(--primary)_10%,transparent),transparent_35%),radial-gradient(circle_at_bottom_left,color-mix(in_srgb,var(--accent)_12%,transparent),transparent_40%),var(--background)] text-[color:var(--foreground)]">
+        <SiteHeader healthMessage={healthMessage} showMarketingNav={false} />
+        <main className="mx-auto w-[min(1280px,calc(100%-1.25rem))] py-8 md:py-10">
+          <PublicClaimPage
+            electionSlug={publicClaimRoute.electionSlug}
+            healthMessage={healthMessage}
+            onAuthenticated={handleAuthenticated}
+          />
         </main>
         <SiteFooter />
       </div>
