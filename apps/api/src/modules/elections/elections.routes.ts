@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 import { ballotsRouter } from "../ballots/ballots.routes";
+import { eligibilityAdminRouter } from "../eligibility/eligibility.routes";
 import { requireOrganizationManager } from "../../middlewares/organization.middleware";
 import {
   createCandidateForOffice,
@@ -24,6 +25,7 @@ electionsRouter.patch(
   requireOrganizationManager,
   updateElectionStatusForOrganization
 );
+electionsRouter.use("/:electionId", eligibilityAdminRouter);
 electionsRouter.use("/:electionId", ballotsRouter);
 
 electionsRouter.get("/:electionId/offices", listOffices);

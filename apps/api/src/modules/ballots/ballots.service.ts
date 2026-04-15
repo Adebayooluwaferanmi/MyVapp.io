@@ -2,6 +2,8 @@ import { ElectionStatus } from "@prisma/client";
 
 import { AppError } from "../../lib/app-error";
 import { prisma } from "../../lib/prisma";
+import type { AuditRequestContext } from "../../lib/request-audit";
+import { recordAuditLog } from "../audit/audit.service";
 import type { SubmitBallotInput } from "./ballots.schemas";
 
 async function getElectionOrThrow(organizationId: string, electionId: string) {
@@ -74,7 +76,8 @@ export async function submitBallot(
   organizationId: string,
   electionId: string,
   voterId: string,
-  input: SubmitBallotInput
+  input: SubmitBallotInput,
+  auditContext?: AuditRequestContext
 ) {
   const election = await getElectionOrThrow(organizationId, electionId);
 
@@ -142,6 +145,23 @@ export async function submitBallot(
         votes: true
       }
     });
+
+    await recordAuditLog(
+      {
+        organizationId,
+        actorUserId: voterId,
+        action: "ballot.submitted",
+        targetType: "ballot",
+        targetId: ballot.id,
+        ipAddress: auditContext?.ipAddress,
+        userAgent: auditContext?.userAgent,
+        metadata: {
+          electionId,
+          selectionCount: input.selections.length
+        }
+      },
+      transaction
+    );
 
     return ballot;
   });

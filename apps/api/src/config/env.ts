@@ -9,6 +9,10 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters."),
   JWT_EXPIRES_IN: z.string().default("1d"),
   BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(10).max(14).default(12),
+  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(8),
+  BALLOT_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  BALLOT_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
   CLIENT_URL: z.string().url().default("http://localhost:8080"),
   CORS_ORIGIN: z.string().url().default("http://localhost:8080")
 });

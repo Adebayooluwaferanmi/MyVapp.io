@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 
+import { getRequestAuditContext } from "../../lib/request-audit";
 import { electionParamsSchema, submitBallotSchema } from "./ballots.schemas";
 import {
   getBallotForElection,
@@ -17,7 +18,13 @@ export async function getMyBallot(request: Request, response: Response): Promise
 export async function submitMyBallot(request: Request, response: Response): Promise<void> {
   const { organizationId, electionId } = electionParamsSchema.parse(request.params);
   const payload = submitBallotSchema.parse(request.body);
-  const ballot = await submitBallot(organizationId, electionId, request.user!.sub, payload);
+  const ballot = await submitBallot(
+    organizationId,
+    electionId,
+    request.user!.sub,
+    payload,
+    getRequestAuditContext(request)
+  );
 
   response.status(201).json({
     message: "Ballot submitted successfully.",
