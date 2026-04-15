@@ -5,6 +5,8 @@ import type {
   BallotState,
   CurrentUser,
   ElectionDetail,
+  ElectionInvitationSendResponse,
+  ElectionEligibilityImportCommitResponse,
   ElectionEligibilityImportPreview,
   ElectionEligibilityRoster,
   ElectionSummary,
@@ -239,7 +241,7 @@ export function previewElectionEligibilityImport(
   token: string,
   organizationId: string,
   electionId: string,
-  payload: { filename: string; format: "CSV" | "XLSX" }
+  payload: { filename: string; format: "CSV" | "XLSX"; contentBase64: string }
 ) {
   return apiRequest<ElectionEligibilityImportPreview>(
     `/organizations/${organizationId}/elections/${electionId}/eligibility-imports/preview`,
@@ -258,7 +260,7 @@ export function commitElectionEligibilityImport(
   importId: string,
   payload: { note?: string }
 ) {
-  return apiRequest<{ importJob: { id: string; committedAt: string } }>(
+  return apiRequest<ElectionEligibilityImportCommitResponse>(
     `/organizations/${organizationId}/elections/${electionId}/eligibility-imports/${importId}/commit`,
     {
       method: "POST",
@@ -288,7 +290,7 @@ export function sendElectionInvitations(
   electionId: string,
   payload: { eligibilityIds?: string[] } = {}
 ) {
-  return apiRequest<{ message: string }>(
+  return apiRequest<ElectionInvitationSendResponse>(
     `/organizations/${organizationId}/elections/${electionId}/invitations/send`,
     {
       method: "POST",
@@ -304,7 +306,7 @@ export function resendElectionInvitation(
   electionId: string,
   eligibilityId: string
 ) {
-  return apiRequest<{ message: string }>(
+  return apiRequest<ElectionInvitationSendResponse>(
     `/organizations/${organizationId}/elections/${electionId}/invitations/${eligibilityId}/resend`,
     {
       method: "POST",

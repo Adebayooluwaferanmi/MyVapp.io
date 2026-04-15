@@ -97,7 +97,7 @@ model Election {
   organizationId    String
   title             String
   slug              String
-  publicSlug        String                        @unique @default(cuid())
+  publicSlug        String?                       @unique
   description       String?
   status            ElectionStatus                @default(DRAFT)
   startsAt          DateTime?

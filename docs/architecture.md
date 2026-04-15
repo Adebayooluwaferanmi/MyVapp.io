@@ -43,7 +43,7 @@ Represents an authenticated platform identity. Holds hashed credentials and a pl
 
 ### Organization
 
-Represents a tenant. A tenant can be a church, school, cooperative, alumni body, club, political ward, association, or community group.
+Represents a tenant. A tenant can be a church, school, cooperative, club, political ward, association, union, or community group.
 
 ### OrganizationMember
 
@@ -101,7 +101,7 @@ Recommended later upgrades:
 - Login throttling
 - IP and audit event tracking
 
-The new alumni-election flow adds a second access layer:
+The new voter-registry flow adds a second access layer:
 
 - managers still use the standard email/password JWT model
 - voters are approved through election-scoped eligibility
@@ -194,9 +194,9 @@ This app should be built around election integrity and organization flexibility,
 
 Those questions are why the project benefits from a clear modular structure from the beginning.
 
-## Alumni election trust model
+## Voter Registry Trust Model
 
-For alumni elections, the platform is moving to this trust model:
+For election-specific voter registries, the platform is moving to this trust model:
 
 - organization membership controls manager/admin access
 - election eligibility controls voter access

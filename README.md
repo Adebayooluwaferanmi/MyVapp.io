@@ -14,7 +14,7 @@ The current repository started effectively empty, so this scaffold establishes a
 - Organization member invite/add flows with per-organization roles
 - Election status, ballot submission, and result tally endpoints
 - Election-scoped theme presets for organizations
-- Milestone 1 contracts for alumni voter registry imports, election invitations, and public claim links
+- Election-scoped voter registry preview, eligibility roster, and manual invite delivery
 - Architecture and setup documentation
 
 ## Product intent
@@ -28,14 +28,14 @@ This project is shaped around a real voting domain:
 - Users can belong to organizations with different roles
 - Authentication is implemented first so later admin and voter flows sit on a secure base
 
-## Alumni election roadmap
+## Voter registry roadmap
 
-MyVapp is moving toward a more secure alumni-election model that separates:
+MyVapp is moving toward a more secure election-access model that separates:
 
 - organization membership for managers and operators
 - election eligibility for actual voter access
 
-The alumni workflow being introduced is:
+The workflow being introduced is:
 
 1. A manager creates an election for the association.
 2. The manager imports an approved voter registry from `CSV` or `XLSX`.
@@ -184,6 +184,13 @@ cp .env.example .env
 - `CLIENT_URL`
 - `CORS_ORIGIN`
 - `VITE_API_URL`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_SECURE`
+- `SMTP_USER`
+- `SMTP_PASSWORD`
+- `SMTP_FROM_EMAIL`
+- `SMTP_FROM_NAME`
 
 ## Run with Docker Compose
 
@@ -273,13 +280,13 @@ Ballot access is now restricted to eligible members only. A user must belong to 
 
 ## Election-scoped voter eligibility
 
-The next voting-security layer is election-scoped eligibility, which is now documented and partially scaffolded in the API:
+The next voting-security layer is election-scoped eligibility, which is now active in the API and manager workspace:
 
 - `ElectionEligibilityImportJob` represents an import preview or committed eligibility batch.
 - `ElectionEligibility` represents one approved voter for one election.
 - `ElectionInvite` represents a one-time invite token for that election-scoped eligibility record.
 
-Milestone 1 adds the schema and API contracts for:
+The current API surface includes:
 
 - `POST /organizations/:organizationId/elections/:electionId/eligibility-imports/preview`
 - `POST /organizations/:organizationId/elections/:electionId/eligibility-imports/:importId/commit`
@@ -289,15 +296,18 @@ Milestone 1 adds the schema and API contracts for:
 - `GET /public/elections/:electionSlug/claim-context?token=...`
 - `POST /public/elections/:electionSlug/claim`
 
-Milestone 1 is contract-first:
+What is available now:
 
 - the roster endpoint is live and returns the current election-scoped eligibility view
-- import preview, import commit, invitation send/resend, and public claim endpoints are stubbed with `501 Not Implemented`
-- later milestones will add CSV/XLSX parsing, SMTP invite delivery, and the public claim UI
+- import preview accepts `CSV` and `XLSX`, validates rows, and persists a preview job
+- import commit writes the accepted rows into election eligibility records
+- invitation send/resend creates one-time invite tokens and delivers them through SMTP configuration
+- the manager workspace includes voter registry preview, commit, roster filtering, turnout summary, and manual send/resend controls
+- public claim endpoints remain reserved for the next milestone and still return `501 Not Implemented`
 
 ## Result visibility policy
 
-For alumni elections, MyVapp is adopting a safer publication policy:
+For election-specific voter registry flows, MyVapp is adopting a safer publication policy:
 
 - during `OPEN` elections, managers can monitor turnout only
 - during `OPEN` elections, no one can see candidate tallies

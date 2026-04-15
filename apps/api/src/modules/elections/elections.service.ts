@@ -32,6 +32,25 @@ async function buildUniqueElectionSlug(organizationId: string, title: string): P
   return slug;
 }
 
+async function buildUniquePublicElectionSlug(title: string): Promise<string> {
+  const base = slugify(title) || "election";
+  let publicSlug = base;
+  let sequence = 1;
+
+  while (
+    await prisma.election.findUnique({
+      where: {
+        publicSlug
+      }
+    })
+  ) {
+    publicSlug = `${base}-${sequence}`;
+    sequence += 1;
+  }
+
+  return publicSlug;
+}
+
 async function ensureElectionInOrganization(organizationId: string, electionId: string) {
   const election = await prisma.election.findFirst({
     where: {
@@ -91,6 +110,7 @@ export async function createElection(
   auditContext?: AuditRequestContext
 ) {
   const slug = await buildUniqueElectionSlug(organizationId, input.title);
+  const publicSlug = await buildUniquePublicElectionSlug(input.title);
 
   return prisma.$transaction(async (transaction) => {
     const election = await transaction.election.create({
@@ -99,6 +119,7 @@ export async function createElection(
         title: input.title.trim(),
         description: input.description?.trim() || null,
         slug,
+        publicSlug,
         startsAt: input.startsAt ? new Date(input.startsAt) : null,
         endsAt: input.endsAt ? new Date(input.endsAt) : null
       }

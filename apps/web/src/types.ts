@@ -148,6 +148,30 @@ export type ElectionEligibilityImportPreview = {
   };
 };
 
+export type ElectionEligibilityImportCommitResponse = {
+  importJob: {
+    id: string;
+    committedAt: string;
+  };
+  committedCount: number;
+};
+
+export type ElectionInvitationSendResponse = {
+  message: string;
+  sentCount: number;
+  skippedCount: number;
+  sent: Array<{
+    eligibilityId: string;
+    email: string;
+    expiresAt: string;
+  }>;
+  skipped: Array<{
+    eligibilityId: string;
+    email: string;
+    reason: string;
+  }>;
+};
+
 export type ElectionEligibilityRecord = {
   id: string;
   memberUniqueId: string;
@@ -200,6 +224,7 @@ export type ElectionEligibilityRoster = {
     importedEligibleCount: number;
     invitesSentCount: number;
     claimedCount: number;
+    votedCount: number;
     revokedCount: number;
     expiredCount: number;
     usedInviteCount: number;
