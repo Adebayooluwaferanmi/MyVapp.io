@@ -1,5 +1,5 @@
 export const apiBaseUrl =
-  import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "http://localhost:4000/api/v1";
+  import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "/api/v1";
 
 type RequestOptions = RequestInit & {
   token?: string | null;
@@ -13,10 +13,21 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     headers.set("Authorization", `Bearer ${options.token}`);
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    ...options,
-    headers
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      ...options,
+      headers
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message
+        ? "Cannot reach the API right now. Make sure the backend is running and try again."
+        : "Cannot reach the API right now.";
+
+    throw new Error(message);
+  }
 
   const responseText = await response.text();
   let payload = {} as T & { message?: string };

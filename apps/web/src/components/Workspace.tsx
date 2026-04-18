@@ -1,7 +1,29 @@
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  EmptyState as SharedEmptyState,
+  MetricCard as SharedMetricCard,
+  OrganizationThemeForm,
+  PageHeader,
+  PageShell,
+  ReviewPanel,
+  SectionCard,
+  StatusBadge as SharedStatusBadge,
+  WorkflowStep as SharedWorkflowStep
+} from "@/components/shared/surfaces";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  commitElectionEligibilityImport,
   createOrganizationMember,
   createCandidate,
   createElection,
@@ -11,26 +33,38 @@ import {
   getElectionDetail,
   getElectionResults,
   listElections,
+  listElectionEligibility,
+  listOrganizationAuditLogs,
   listOrganizationMembers,
   listOrganizations,
+  previewElectionEligibilityImport,
+  resendElectionInvitation,
+  sendElectionInvitations,
   submitBallot,
+  updateOrganizationTheme,
   updateOrganizationMemberRole,
   updateElectionStatus
-} from "../lib/services";
+} from "@/lib/services";
+import type { OrganizationThemeInput } from "@/lib/theme";
 import type {
+  AuditLog,
   BallotState,
   ElectionDetail,
+  ElectionEligibilityImportPreview,
+  ElectionEligibilityRoster,
+  ElectionEligibilityStatus,
   ElectionSummary,
   OrganizationMember,
   Organization,
   Results,
   StoredSession
-} from "../types";
+} from "@/types";
 
 type WorkspaceProps = {
   healthMessage: string;
   onLogout: () => void;
   onRefreshProfile: () => Promise<void>;
+  onThemeChange: (theme: OrganizationThemeInput) => void;
   session: StoredSession;
 };
 
@@ -44,7 +78,7 @@ type WorkflowTone = "ready" | "attention" | "locked";
 const electionStatuses = ["DRAFT", "SCHEDULED", "OPEN", "CLOSED", "ARCHIVED"] as const;
 const managerRoles = new Set(["OWNER", "ADMIN"]);
 const membershipRoles = ["OWNER", "ADMIN", "MEMBER", "VOTER"] as const;
-const workspaceSections = ["members", "setup", "structure", "vote", "results"] as const;
+const workspaceSections = ["setup", "members", "structure", "vote", "results", "audit"] as const;
 
 type WorkspaceSection = (typeof workspaceSections)[number];
 
@@ -53,20 +87,27 @@ const sectionLabelMap: Record<WorkspaceSection, string> = {
   setup: "Setup",
   structure: "Structure",
   vote: "Vote",
-  results: "Results"
+  results: "Results",
+  audit: "Audit"
 };
 
 const sectionHintMap: Record<WorkspaceSection, string> = {
-  members: "Invite members, assign organization roles, and manage voter eligibility.",
-  setup: "Create and select elections, then set status windows.",
-  structure: "Define offices and candidate lists for the selected election.",
-  vote: "Cast ballots with one candidate choice per office.",
-  results: "Review manager-facing tally and vote distribution."
+  members: "Add members, update roles, and control ballot access.",
+  setup: "Create elections and update their status.",
+  structure: "Add offices and candidates for the selected election.",
+  vote: "Review the ballot and submit one choice per office.",
+  results: "View results for the selected election.",
+  audit: "Review recent account, membership, and ballot activity."
 };
 
-const initialOrganizationForm = {
+const initialOrganizationForm: {
+  name: string;
+  description: string;
+  themePreset: OrganizationThemeInput["themePreset"];
+} = {
   name: "",
-  description: ""
+  description: "",
+  themePreset: "myvapp-default"
 };
 
 const initialElectionForm = {
@@ -93,6 +134,62 @@ const initialMemberForm = {
   role: "VOTER"
 };
 
+const eligibilityStatusOptions = ["ALL", "PENDING", "INVITED", "CLAIMED", "VOTED", "REVOKED", "EXPIRED"] as const;
+
+type EligibilityFilterValue = (typeof eligibilityStatusOptions)[number];
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const result = reader.result;
+
+      if (typeof result !== "string") {
+        reject(new Error("The selected file could not be read."));
+        return;
+      }
+
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      resolve(base64);
+    };
+
+    reader.onerror = () => reject(new Error("The selected file could not be read."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function resolveImportFormat(fileName: string): "CSV" | "XLSX" | null {
+  const lower = fileName.toLowerCase();
+
+  if (lower.endsWith(".csv")) {
+    return "CSV";
+  }
+
+  if (lower.endsWith(".xlsx")) {
+    return "XLSX";
+  }
+
+  return null;
+}
+
+function formatInviteSkipReason(reason: string) {
+  switch (reason) {
+    case "already_claimed":
+      return "Already claimed";
+    case "already_voted":
+      return "Already voted";
+    case "revoked":
+      return "Revoked";
+    case "expired":
+      return "Expired";
+    case "already_sent":
+      return "Already sent";
+    default:
+      return toTitleCase(reason);
+  }
+}
+
 function formatDateTime(value: string | null | undefined): string {
   if (!value) {
     return "Not scheduled";
@@ -116,8 +213,28 @@ function toTitleCase(value: string): string {
     .join(" ");
 }
 
+function formatAuditAction(action: string): string {
+  return action
+    .split(".")
+    .map((part) => toTitleCase(part))
+    .join(" · ");
+}
+
+function formatAuditMetadata(metadata: Record<string, unknown> | null): string {
+  if (!metadata) {
+    return "No additional metadata";
+  }
+
+  const parts = Object.entries(metadata)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .slice(0, 4)
+    .map(([key, value]) => `${toTitleCase(key)}: ${String(value)}`);
+
+  return parts.length > 0 ? parts.join(" · ") : "No additional metadata";
+}
+
 function StatusPill({ status }: { status: string }) {
-  return <span className={`status-badge status-badge--${status.toLowerCase()}`}>{toTitleCase(status)}</span>;
+  return <SharedStatusBadge status={status} />;
 }
 
 function EmptyPanel({
@@ -128,10 +245,7 @@ function EmptyPanel({
   title: string;
 }) {
   return (
-    <section className="panel empty-panel">
-      <h3>{title}</h3>
-      <p className="muted">{body}</p>
-    </section>
+    <SharedEmptyState body={body} title={title} />
   );
 }
 
@@ -143,10 +257,7 @@ function MetricCard({
   value: number | string;
 }) {
   return (
-    <article className="panel metric-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </article>
+    <SharedMetricCard label={label} value={value} />
   );
 }
 
@@ -169,21 +280,86 @@ function WorkflowCard({
 }) {
   return (
     <button
-      className={isActive ? `workflow-card workflow-card--${tone} active` : `workflow-card workflow-card--${tone}`}
+      className={`group rounded-[var(--radius)] border p-4 text-left transition ${
+        isActive
+          ? "border-[color:var(--primary)]/35 bg-[color:var(--secondary)]/70"
+          : tone === "ready"
+            ? "border-[color:var(--success)]/15 bg-white hover:bg-[color:var(--muted)]/60"
+            : "border-[color:var(--border)] bg-white hover:bg-[color:var(--muted)]/60"
+      }`}
       disabled={isDisabled}
       onClick={onClick}
       type="button"
     >
-      <span className="workflow-card__eyebrow">{label}</span>
-      <strong>{meta}</strong>
-      <p>{description}</p>
+      <span className="block text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--muted-foreground)]">{label}</span>
+      <strong className="mt-3 block text-base">{meta}</strong>
+      <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">{description}</p>
     </button>
   );
 }
 
-export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }: WorkspaceProps) {
+function ReadinessItem({
+  label,
+  meta,
+  tone
+}: {
+  label: string;
+  meta: string;
+  tone: WorkflowTone;
+}) {
+  return (
+    <div
+      className={`rounded-[calc(var(--radius)-0.25rem)] border p-4 ${
+        tone === "ready"
+          ? "border-[color:var(--success)]/20 bg-[color:var(--success)]/10"
+          : tone === "attention"
+            ? "border-[color:var(--warning)]/20 bg-[color:var(--warning)]/10"
+            : "border-[color:var(--border)] bg-[color:var(--muted)]/60"
+      }`}
+    >
+      <span className="block text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--muted-foreground)]">{label}</span>
+      <strong className="mt-2 block">{meta}</strong>
+    </div>
+  );
+}
+
+function NavigationCard({
+  active,
+  description,
+  disabled = false,
+  label,
+  onClick
+}: {
+  active: boolean;
+  description: string;
+  disabled?: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`rounded-[var(--radius)] border p-4 text-left transition ${
+        active
+          ? "border-[color:var(--primary)]/35 bg-[color:var(--secondary)]/70"
+          : "border-[color:var(--border)] bg-white hover:bg-[color:var(--muted)]/60"
+      } disabled:cursor-not-allowed disabled:opacity-50`}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-semibold">{label}</p>
+        {active ? <Badge variant="outline">Current</Badge> : null}
+      </div>
+      <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">{description}</p>
+    </button>
+  );
+}
+
+export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeChange, session }: WorkspaceProps) {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [members, setMembers] = useState<OrganizationMember[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const [elections, setElections] = useState<ElectionSummary[]>([]);
   const [selectedElectionId, setSelectedElectionId] = useState<string | null>(null);
@@ -201,9 +377,19 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
   const [officeForm, setOfficeForm] = useState(initialOfficeForm);
   const [candidateForm, setCandidateForm] = useState(initialCandidateForm);
   const [memberForm, setMemberForm] = useState(initialMemberForm);
+  const [themeForm, setThemeForm] = useState<OrganizationThemeInput>({
+    themePreset: "myvapp-default"
+  });
   const [ballotSelections, setBallotSelections] = useState<Record<string, string>>({});
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("setup");
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+  const [isLoadingAuditLogs, setIsLoadingAuditLogs] = useState(false);
+  const [eligibilityRoster, setEligibilityRoster] = useState<ElectionEligibilityRoster | null>(null);
+  const [isLoadingEligibility, setIsLoadingEligibility] = useState(false);
+  const [eligibilityFilter, setEligibilityFilter] = useState<EligibilityFilterValue>("ALL");
+  const [registryFile, setRegistryFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<ElectionEligibilityImportPreview | null>(null);
+  const [importInputKey, setImportInputKey] = useState(0);
 
   const selectedOrganization = useMemo(
     () => organizations.find((organization) => organization.id === selectedOrganizationId) ?? null,
@@ -227,6 +413,33 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
   const hasBallotChoices = Boolean(ballotState && ballotState.offices.length > 0);
   const hasSubmittedBallot = Boolean(ballotState?.ballot);
   const hasResults = Boolean(results && results.offices.length > 0);
+  const hasAuditLogs = auditLogs.length > 0;
+  const ballotIsOpen = ballotState?.election.status === "OPEN";
+  const eligibleVoterCount = useMemo(
+    () => members.filter((member) => member.canVote).length,
+    [members]
+  );
+  const totalBallotOffices = ballotState?.offices.length ?? 0;
+  const selectedBallotCount = Object.values(ballotSelections).filter(Boolean).length;
+  const ballotCompletionPercent =
+    totalBallotOffices === 0 ? 0 : Math.round((selectedBallotCount / totalBallotOffices) * 100);
+
+  const ballotReviewItems = useMemo(() => {
+    if (!ballotState) {
+      return [];
+    }
+
+    return ballotState.offices.map((office) => {
+      const selectedCandidateId = ballotSelections[office.id];
+      const selectedCandidate = office.candidates.find((candidate) => candidate.id === selectedCandidateId);
+
+      return {
+        officeId: office.id,
+        officeTitle: office.title,
+        candidateName: selectedCandidate?.displayName ?? null
+      };
+    });
+  }, [ballotSelections, ballotState]);
 
   const metrics = useMemo(() => {
     const officeCount = electionDetail?.offices.length ?? 0;
@@ -257,8 +470,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         tone: members.length > 1 ? "ready" : selectedOrganization ? "attention" : "locked",
         meta: `${members.length} organization members`,
         description: selectedOrganization
-          ? "Add admins and eligible voters before expecting ballot access."
-          : "Choose an organization before managing membership and voter eligibility.",
+          ? "Add people and choose who can vote before voting starts."
+          : "Choose an organization before managing members.",
         disabled: !selectedOrganization
       },
       {
@@ -266,8 +479,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         tone: selectedElectionId ? "ready" : "attention",
         meta: selectedElectionLabel,
         description: selectedElectionId
-          ? `Status is ${toTitleCase(electionDetail?.status ?? "draft")}. Manage timing and publication here.`
-          : "Create or select an election before configuring the rest of the workflow.",
+          ? `Status is ${toTitleCase(electionDetail?.status ?? "draft")}. Update dates and status here.`
+          : "Create or choose an election before moving on.",
         disabled: false
       },
       {
@@ -275,8 +488,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         tone: currentOffices.length > 0 ? "ready" : selectedElectionId ? "attention" : "locked",
         meta: `${currentOffices.length} offices · ${candidateCount} candidates`,
         description: selectedElectionId
-          ? "Define the ballot structure by adding offices and candidate lists."
-          : "Choose an election first to unlock office and candidate setup.",
+          ? "Add the offices and candidates that will appear on the ballot."
+          : "Choose an election first.",
         disabled: !selectedElectionId
       },
       {
@@ -289,8 +502,8 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
               : "locked",
         meta: hasSubmittedBallot ? "Ballot submitted" : electionDetail?.status === "OPEN" ? "Voting open" : "Voting closed",
         description: hasBallotChoices
-          ? "Voters can choose one candidate per office and submit their ballot."
-          : "Add offices and candidates, then open the election to enable voting.",
+          ? "The ballot is ready for testing or live voting."
+          : "Add offices and candidates, then open the election.",
         disabled: !selectedElectionId
       },
       {
@@ -298,17 +511,28 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         tone: hasResults ? "ready" : selectedElectionId ? "attention" : "locked",
         meta: hasResults ? `${results?.offices.length ?? 0} office tallies available` : "Awaiting counted votes",
         description: canManageSelectedOrganization
-          ? "Managers can inspect live or historical tallies for the selected election."
-          : "Results are reserved for managers in the selected organization.",
+          ? "Managers can review vote totals here."
+          : "Only managers can view results.",
         disabled: !selectedElectionId
+      },
+      {
+        section: "audit" as const,
+        tone: hasAuditLogs ? "ready" : selectedOrganization ? "attention" : "locked",
+        meta: hasAuditLogs ? `${auditLogs.length} recent audit events` : "No recent audit events",
+        description: canManageSelectedOrganization
+          ? "Review recent actions without exposing ballot choices."
+          : "Only managers can view the audit log.",
+        disabled: !selectedOrganization || !canManageSelectedOrganization
       }
     ];
   }, [
+    auditLogs.length,
     candidateCount,
     canManageSelectedOrganization,
     currentOffices.length,
     electionDetail?.status,
     electionDetail?.title,
+    hasAuditLogs,
     hasBallotChoices,
     hasResults,
     hasSubmittedBallot,
@@ -321,60 +545,77 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
   const recommendedStep = useMemo(() => {
     if (!selectedOrganization) {
       return {
-        title: "Start by choosing an organization",
-        body: "Create a new organization or select an existing one so the election workspace can load."
+        title: "Choose an organization",
+        body: "Create a new organization or pick one from the list to get started.",
+        section: "setup" as const,
+        actionLabel: "Get started"
       };
     }
 
     if (!selectedElectionId) {
       return {
-        title: "Create or select an election",
-        body: "Your next action is to define the election container before you can build a ballot."
+        title: "Create or choose an election",
+        body: "Pick the election you want to work on before adding offices or candidates.",
+        section: "setup" as const,
+        actionLabel: "Create election"
       };
     }
 
-    const eligibleVoterCount = members.filter((member) => member.canVote).length;
-
     if (eligibleVoterCount === 0) {
       return {
-        title: "Assign at least one eligible voter",
-        body: "Members with the VOTER, ADMIN, or OWNER role can access ballots. Add or update members first."
+        title: "Add voters",
+        body: "Give at least one member ballot access before you open voting.",
+        section: "members" as const,
+        actionLabel: "Manage members"
       };
     }
 
     if (currentOffices.length === 0) {
       return {
-        title: "Add offices to shape the ballot",
-        body: "Define the positions being contested so candidate entry and voting have a structure."
+        title: "Add offices",
+        body: "Set up the roles voters will choose from.",
+        section: "structure" as const,
+        actionLabel: "Build the ballot"
       };
     }
 
     if (candidateCount === 0) {
       return {
-        title: "Add candidates to each office",
-        body: "The election structure exists, but voters still need candidate options before voting can open."
+        title: "Add candidates",
+        body: "The offices are ready. Now add the candidates who will appear on the ballot.",
+        section: "structure" as const,
+        actionLabel: "Add candidates"
       };
     }
 
     if (electionDetail?.status !== "OPEN") {
       return {
-        title: "Open the election when the ballot is ready",
-        body: "Move the election to OPEN in Setup so members can cast ballots."
+        title: "Open voting",
+        body: "When the ballot is ready, change the election status to OPEN.",
+        section: "setup" as const,
+        actionLabel: "Open election"
       };
     }
 
     if (!hasSubmittedBallot) {
       return {
-        title: "Voting is live",
-        body: "Switch to Vote to test the ballot experience or ask members to cast ballots."
+        title: "Voting is open",
+        body: "You can review the ballot here or invite members to vote.",
+        section: "vote" as const,
+        actionLabel: "Open ballot"
       };
     }
 
     return {
-      title: "Review progress and results",
-      body: "The core workflow is active. Use Results to monitor vote distribution and confirm tally health."
+      title: "Review progress",
+      body: canManageSelectedOrganization
+        ? "Voting is underway. Check results and the audit log as needed."
+        : "Voting is underway. Open the ballot view to review the flow.",
+      section: canManageSelectedOrganization ? ("results" as const) : ("vote" as const),
+      actionLabel: canManageSelectedOrganization ? "Review results" : "Revisit ballot"
     };
   }, [
+    canManageSelectedOrganization,
     candidateCount,
     currentOffices.length,
     electionDetail?.status,
@@ -384,6 +625,63 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     selectedOrganization
   ]);
 
+  const readinessItems = useMemo(
+    () => [
+      {
+        label: "Access",
+        meta:
+          eligibleVoterCount > 0
+            ? `${eligibleVoterCount} eligible voter${eligibleVoterCount === 1 ? "" : "s"}`
+            : "No eligible voters yet",
+        tone: eligibleVoterCount > 0 ? ("ready" as const) : selectedOrganization ? ("attention" as const) : ("locked" as const)
+      },
+      {
+        label: "Election",
+        meta: selectedElectionId ? electionDetail?.title ?? "Loading election…" : "No election selected",
+        tone: selectedElectionId ? ("ready" as const) : ("attention" as const)
+      },
+      {
+        label: "Ballot",
+        meta:
+          currentOffices.length > 0 && candidateCount > 0
+            ? `${currentOffices.length} offices · ${candidateCount} candidates`
+            : selectedElectionId
+              ? "Ballot still being assembled"
+              : "Locked until election is chosen",
+        tone:
+          currentOffices.length > 0 && candidateCount > 0
+            ? ("ready" as const)
+            : selectedElectionId
+              ? ("attention" as const)
+              : ("locked" as const)
+      },
+      {
+        label: "Voting",
+        meta:
+          electionDetail?.status === "OPEN"
+            ? "Accepting ballots now"
+            : selectedElectionId
+              ? `Status: ${toTitleCase(electionDetail?.status ?? "draft")}`
+              : "Not available yet",
+        tone:
+          electionDetail?.status === "OPEN"
+            ? ("ready" as const)
+            : selectedElectionId
+              ? ("attention" as const)
+              : ("locked" as const)
+      }
+    ],
+    [
+      candidateCount,
+      currentOffices.length,
+      electionDetail?.status,
+      electionDetail?.title,
+      eligibleVoterCount,
+      selectedElectionId,
+      selectedOrganization
+    ]
+  );
+
   useEffect(() => {
     void loadOrganizations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -392,6 +690,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
   useEffect(() => {
     if (!selectedOrganizationId) {
       setMembers([]);
+      setAuditLogs([]);
       setElections([]);
       setSelectedElectionId(null);
       setElectionDetail(null);
@@ -404,8 +703,10 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     void loadElections(selectedOrganizationId);
     if (canManageSelectedOrganization) {
       void loadMembers(selectedOrganizationId);
+      void loadAuditLogs(selectedOrganizationId);
     } else {
       setMembers([]);
+      setAuditLogs([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOrganizationId, session.token, canManageSelectedOrganization]);
@@ -422,6 +723,21 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     void loadElectionWorkspace(selectedOrganizationId, selectedElectionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedElectionId, selectedOrganizationId, session.token, canManageSelectedOrganization]);
+
+  useEffect(() => {
+    if (!selectedOrganizationId || !selectedElectionId || !canManageSelectedOrganization) {
+      setEligibilityRoster(null);
+      setImportPreview(null);
+      return;
+    }
+
+    void loadEligibilityRoster(
+      selectedOrganizationId,
+      selectedElectionId,
+      eligibilityFilter === "ALL" ? undefined : eligibilityFilter
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedElectionId, selectedOrganizationId, session.token, canManageSelectedOrganization, eligibilityFilter]);
 
   useEffect(() => {
     if (currentOffices.length === 0) {
@@ -464,6 +780,21 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
       }, {})
     );
   }, [ballotState]);
+
+  useEffect(() => {
+    setThemeForm({
+      themePreset: selectedOrganization?.themePreset ?? "myvapp-default",
+      themeOverrides: selectedOrganization?.themeOverrides ?? undefined
+    });
+    onThemeChange(
+      selectedOrganization
+        ? {
+            themePreset: selectedOrganization.themePreset,
+            themeOverrides: selectedOrganization.themeOverrides ?? undefined
+          }
+        : { themePreset: "myvapp-default" }
+    );
+  }, [onThemeChange, selectedOrganization]);
 
   useEffect(() => {
     if (!selectedElectionId && activeSection !== "setup") {
@@ -546,6 +877,44 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     }
   }
 
+  async function loadAuditLogs(organizationId: string) {
+    setIsLoadingAuditLogs(true);
+
+    try {
+      const response = await listOrganizationAuditLogs(session.token, organizationId, 25);
+      setAuditLogs(response.auditLogs);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to load audit logs."
+      });
+      setAuditLogs([]);
+    } finally {
+      setIsLoadingAuditLogs(false);
+    }
+  }
+
+  async function loadEligibilityRoster(
+    organizationId: string,
+    electionId: string,
+    status?: ElectionEligibilityStatus
+  ) {
+    setIsLoadingEligibility(true);
+
+    try {
+      const response = await listElectionEligibility(session.token, organizationId, electionId, status);
+      setEligibilityRoster(response);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to load the voter registry."
+      });
+      setEligibilityRoster(null);
+    } finally {
+      setIsLoadingEligibility(false);
+    }
+  }
+
   async function loadElectionWorkspace(organizationId: string, electionId: string) {
     setIsLoadingElectionWorkspace(true);
 
@@ -610,6 +979,33 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     }
   }
 
+  async function handleUpdateTheme() {
+    if (!selectedOrganizationId) {
+      return;
+    }
+
+    setActiveAction("update-theme");
+    setNotice(null);
+
+    try {
+      const response = await updateOrganizationTheme(session.token, selectedOrganizationId, themeForm);
+
+      setNotice({
+        tone: "success",
+        text: `Organization theme for "${response.organization.name}" updated successfully.`
+      });
+      await loadOrganizations(selectedOrganizationId);
+      await loadAuditLogs(selectedOrganizationId);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to update organization theme."
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
   async function handleCreateElection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -629,6 +1025,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         text: `Election "${response.election.title}" created successfully.`
       });
       await loadElections(selectedOrganizationId, response.election.id);
+      if (canManageSelectedOrganization) {
+        await loadAuditLogs(selectedOrganizationId);
+      }
     } catch (error) {
       setNotice({
         tone: "error",
@@ -656,6 +1055,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
       });
       await loadElections(selectedOrganizationId, selectedElectionId);
       await loadElectionWorkspace(selectedOrganizationId, selectedElectionId);
+      if (canManageSelectedOrganization) {
+        await loadAuditLogs(selectedOrganizationId);
+      }
     } catch (error) {
       setNotice({
         tone: "error",
@@ -686,6 +1088,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
       });
       await loadElections(selectedOrganizationId, selectedElectionId);
       await loadElectionWorkspace(selectedOrganizationId, selectedElectionId);
+      if (canManageSelectedOrganization) {
+        await loadAuditLogs(selectedOrganizationId);
+      }
     } catch (error) {
       setNotice({
         tone: "error",
@@ -722,6 +1127,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         text: "Candidate created successfully."
       });
       await loadElectionWorkspace(selectedOrganizationId, selectedElectionId);
+      if (canManageSelectedOrganization) {
+        await loadAuditLogs(selectedOrganizationId);
+      }
     } catch (error) {
       setNotice({
         tone: "error",
@@ -753,6 +1161,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
           : `${response.member.user.email} was added to the organization successfully.`
       });
       await loadMembers(selectedOrganizationId);
+      await loadAuditLogs(selectedOrganizationId);
       await loadOrganizations(selectedOrganizationId);
     } catch (error) {
       setNotice({
@@ -785,6 +1194,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         text: `${response.member.user.email} is now assigned as ${toTitleCase(role)}.`
       });
       await loadMembers(selectedOrganizationId);
+      await loadAuditLogs(selectedOrganizationId);
       await loadOrganizations(selectedOrganizationId);
       await onRefreshProfile();
     } catch (error) {
@@ -830,6 +1240,9 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
         text: "Ballot submitted successfully."
       });
       await loadElectionWorkspace(selectedOrganizationId, selectedElectionId);
+      if (canManageSelectedOrganization) {
+        await loadAuditLogs(selectedOrganizationId);
+      }
     } catch (error) {
       setNotice({
         tone: "error",
@@ -840,94 +1253,290 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
     }
   }
 
+  async function handlePreviewEligibilityImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedOrganizationId || !selectedElectionId) {
+      return;
+    }
+
+    if (!registryFile) {
+      setNotice({
+        tone: "error",
+        text: "Choose a CSV or XLSX file before previewing the voter registry."
+      });
+      return;
+    }
+
+    const format = resolveImportFormat(registryFile.name);
+
+    if (!format) {
+      setNotice({
+        tone: "error",
+        text: "Only CSV and XLSX files are supported for the voter registry."
+      });
+      return;
+    }
+
+    setActiveAction("preview-registry-import");
+    setNotice(null);
+
+    try {
+      const contentBase64 = await readFileAsBase64(registryFile);
+      const response = await previewElectionEligibilityImport(session.token, selectedOrganizationId, selectedElectionId, {
+        filename: registryFile.name,
+        format,
+        contentBase64
+      });
+
+      setImportPreview(response);
+      setNotice({
+        tone: "success",
+        text: `Preview ready. ${response.summary.acceptedCount} row${response.summary.acceptedCount === 1 ? "" : "s"} accepted and ${response.summary.rejectedCount} rejected.`
+      });
+    } catch (error) {
+      setImportPreview(null);
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to preview the voter registry."
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function handleCommitEligibilityImport() {
+    if (!selectedOrganizationId || !selectedElectionId || !importPreview) {
+      return;
+    }
+
+    setActiveAction("commit-registry-import");
+    setNotice(null);
+
+    try {
+      const response = await commitElectionEligibilityImport(
+        session.token,
+        selectedOrganizationId,
+        selectedElectionId,
+        importPreview.importId,
+        {}
+      );
+
+      setImportPreview(null);
+      setRegistryFile(null);
+      setImportInputKey((current) => current + 1);
+      setNotice({
+        tone: "success",
+        text: `Committed ${response.committedCount} voter registry row${response.committedCount === 1 ? "" : "s"}.`
+      });
+      await loadEligibilityRoster(
+        selectedOrganizationId,
+        selectedElectionId,
+        eligibilityFilter === "ALL" ? undefined : eligibilityFilter
+      );
+      await loadAuditLogs(selectedOrganizationId);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to commit the voter registry."
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function handleSendElectionInvites() {
+    if (!selectedOrganizationId || !selectedElectionId) {
+      return;
+    }
+
+    setActiveAction("send-election-invites");
+    setNotice(null);
+
+    try {
+      const response = await sendElectionInvitations(session.token, selectedOrganizationId, selectedElectionId);
+      setNotice({
+        tone: "success",
+        text: `${response.message} ${response.skippedCount > 0 ? `${response.skippedCount} record${response.skippedCount === 1 ? " was" : "s were"} skipped.` : ""}`.trim()
+      });
+      await loadEligibilityRoster(
+        selectedOrganizationId,
+        selectedElectionId,
+        eligibilityFilter === "ALL" ? undefined : eligibilityFilter
+      );
+      await loadAuditLogs(selectedOrganizationId);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to send election invites."
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function handleResendElectionInvite(eligibilityId: string) {
+    if (!selectedOrganizationId || !selectedElectionId) {
+      return;
+    }
+
+    setActiveAction(`resend-election-invite-${eligibilityId}`);
+    setNotice(null);
+
+    try {
+      const response = await resendElectionInvitation(
+        session.token,
+        selectedOrganizationId,
+        selectedElectionId,
+        eligibilityId
+      );
+      setNotice({
+        tone: "success",
+        text: response.message
+      });
+      await loadEligibilityRoster(
+        selectedOrganizationId,
+        selectedElectionId,
+        eligibilityFilter === "ALL" ? undefined : eligibilityFilter
+      );
+      await loadAuditLogs(selectedOrganizationId);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to resend the invite."
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  function openWorkspaceSection(section: WorkspaceSection) {
+    setActiveSection(section);
+
+    window.requestAnimationFrame(() => {
+      document.getElementById("workspace-sections")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+    });
+  }
+
   const hasElectionWorkspace = Boolean(selectedElectionId && electionDetail);
+  const selectedElectionSummary = elections.find((election) => election.id === selectedElectionId) ?? null;
+  const sectionDisabled = (section: WorkspaceSection) =>
+    section === "setup"
+      ? false
+      : section === "members" || section === "audit"
+        ? !selectedOrganization
+        : !hasElectionWorkspace;
 
   return (
-    <section className="dashboard-shell">
-      <header className="panel dashboard-header">
-        <div>
-          <p className="eyebrow">Election command center</p>
-          <h1>{session.user.firstName}, your workspace is ready.</h1>
-          <p className="lead dashboard-lead">
-            Create organizations, configure elections, open voting windows, submit ballots, and inspect result tallies from one place.
-          </p>
-          <div className="status-strip">
-            <span>{healthMessage}</span>
-            <span>Signed in as {toTitleCase(session.user.role)}</span>
-            {membershipRole ? <span>Organization role: {toTitleCase(membershipRole)}</span> : null}
-          </div>
-        </div>
+    <PageShell>
+      <PageHeader
+        eyebrow="Workspace"
+        title={`${session.user.firstName}, here's your workspace.`}
+        description="Create organizations, set up elections, manage members, and review results in one place."
+        actions={
+          <>
+            <Button onClick={() => void onRefreshProfile()} type="button" variant="outline">
+              Refresh profile
+            </Button>
+            <Button onClick={onLogout} type="button">
+              Logout
+            </Button>
+          </>
+        }
+        meta={
+          <>
+            <Badge variant="success">{healthMessage}</Badge>
+            <Badge variant="outline">Signed in as {toTitleCase(session.user.role)}</Badge>
+            {membershipRole ? <StatusPill status={membershipRole} /> : null}
+          </>
+        }
+      />
 
-        <div className="dashboard-actions">
-          <button className="secondary-button" onClick={() => void onRefreshProfile()} type="button">
-            Refresh profile
-          </button>
-          <button className="primary-button" onClick={onLogout} type="button">
-            Logout
-          </button>
-        </div>
-      </header>
-
-      <section className="metrics-grid">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard label="Organizations" value={metrics.organizations} />
         <MetricCard label="Elections" value={metrics.elections} />
         <MetricCard label="Offices" value={metrics.offices} />
         <MetricCard label="Candidates" value={metrics.candidates} />
         <MetricCard label="Counted votes" value={metrics.ballots} />
-      </section>
+      </div>
 
-      <section className="panel workspace-section-nav">
-        <p className="workspace-section-nav__label">Workspace sections</p>
-        <p className="workspace-section-nav__hint">{sectionHintMap[activeSection]}</p>
-        <div className="workspace-section-buttons">
-          {workspaceSections.map((section) => {
-            const isActive = section === activeSection;
-            const isDisabled = section !== "setup" && !hasElectionWorkspace;
+      {notice ? (
+        <Alert variant={notice.tone === "success" ? "success" : "destructive"}>
+          <AlertTitle>{notice.tone === "success" ? "Saved" : "Action needed"}</AlertTitle>
+          <AlertDescription>{notice.text}</AlertDescription>
+        </Alert>
+      ) : null}
 
-            return (
-              <button
-                key={section}
-                className={isActive ? "workspace-section-button active" : "workspace-section-button"}
-                disabled={isDisabled}
-                onClick={() => setActiveSection(section)}
-                type="button"
-              >
-                {sectionLabelMap[section]}
-              </button>
-            );
-          })}
+      <SectionCard
+        title="Workspace navigation"
+        description="Jump straight to the area you want to use."
+        action={<Badge variant="outline">Current: {sectionLabelMap[activeSection]}</Badge>}
+      >
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {workspaceSections.map((section) => (
+            <NavigationCard
+              key={section}
+              active={activeSection === section}
+              description={
+                sectionDisabled(section)
+                  ? section === "setup"
+                    ? sectionHintMap[section]
+                    : section === "members" || section === "audit"
+                      ? "Choose an organization first."
+                      : "Choose an organization and election first."
+                  : sectionHintMap[section]
+              }
+              disabled={sectionDisabled(section)}
+              label={sectionLabelMap[section]}
+              onClick={() => openWorkspaceSection(section)}
+            />
+          ))}
         </div>
-      </section>
+      </SectionCard>
 
-      {notice ? <div className={`notice notice--${notice.tone}`}>{notice.text}</div> : null}
+      <div className="grid gap-6 xl:grid-cols-[22rem_minmax(0,1fr)]">
+        <div className="space-y-6">
+          <SectionCard title="Session" description="Account details for this signed-in user.">
+            <div className="space-y-2">
+              <p className="font-semibold">
+                {session.user.firstName} {session.user.lastName}
+              </p>
+              <p className="text-sm text-[color:var(--muted-foreground)]">{session.user.email}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <StatusPill status={session.user.role} />
+              {membershipRole ? <Badge variant="outline">Organization role: {toTitleCase(membershipRole)}</Badge> : null}
+            </div>
+          </SectionCard>
 
-      <section className="dashboard-grid">
-        <aside className="dashboard-sidebar">
-          <section className="panel session-panel">
-            <h2>Session</h2>
-            <p>
-              <strong>{session.user.firstName} {session.user.lastName}</strong>
-            </p>
-            <p>{session.user.email}</p>
-            <p className="muted">Platform role: {toTitleCase(session.user.role)}</p>
-          </section>
-
-          <section className="panel create-panel">
-            <h2>Create organization</h2>
-            <form className="stack-form" onSubmit={handleCreateOrganization}>
-              <label>
-                Organization name
-                <input
+          <SectionCard
+            title="Create organization"
+            description="Add a new organization and choose its starting theme."
+          >
+            <form className="space-y-4" onSubmit={handleCreateOrganization}>
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="organization-name">
+                  Organization name
+                </label>
+                <Input
+                  id="organization-name"
                   required
                   value={organizationForm.name}
                   onChange={(event) =>
                     setOrganizationForm((current) => ({ ...current, name: event.target.value }))
                   }
                 />
-              </label>
-              <label>
-                Description
-                <textarea
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="organization-description">
+                  Description
+                </label>
+                <Textarea
+                  id="organization-description"
                   rows={3}
                   value={organizationForm.description}
                   onChange={(event) =>
@@ -937,697 +1546,1247 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, session }
                     }))
                   }
                 />
-              </label>
-              <button
-                className="primary-button"
-                disabled={activeAction === "create-organization"}
-                type="submit"
-              >
-                {activeAction === "create-organization" ? "Creating..." : "Create organization"}
-              </button>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Theme preset</label>
+                <Select
+                  value={organizationForm.themePreset}
+                  onValueChange={(value) =>
+                    setOrganizationForm((current) => ({
+                      ...current,
+                      themePreset: value as OrganizationThemeInput["themePreset"]
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a preset" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="myvapp-default">MyVapp Default</SelectItem>
+                    <SelectItem value="civic-blue">Civic Blue</SelectItem>
+                    <SelectItem value="emerald-hall">Emerald Hall</SelectItem>
+                    <SelectItem value="sunrise-coral">Sunrise Coral</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Button className="w-full" disabled={activeAction === "create-organization"} type="submit">
+                {activeAction === "create-organization" ? "Creating organization..." : "Create organization"}
+              </Button>
             </form>
-          </section>
+          </SectionCard>
 
-          <section className="panel organization-panel">
-            <div className="panel-header">
-              <h2>Organizations</h2>
-              {isLoadingOrganizations ? <span className="muted">Loading...</span> : null}
-            </div>
-
+          <SectionCard
+            title="Organizations"
+            description="Choose the organization you're working on."
+            action={isLoadingOrganizations ? <Badge variant="outline">Loading...</Badge> : undefined}
+          >
             {organizations.length === 0 ? (
-              <p className="muted">Create your first organization to unlock the election workspace.</p>
+              <SharedEmptyState
+                title="No organizations yet"
+                body="Create your first organization to get started."
+              />
             ) : (
-              <div className="selector-list">
+              <div className="space-y-3">
                 {organizations.map((organization) => {
                   const isSelected = organization.id === selectedOrganizationId;
 
                   return (
                     <button
                       key={organization.id}
-                      className={isSelected ? "selector-card active" : "selector-card"}
+                      className={`w-full rounded-[var(--radius)] border p-4 text-left transition ${
+                        isSelected
+                          ? "border-[color:var(--primary)]/30 bg-[color:var(--secondary)]/70 shadow-sm"
+                          : "border-[color:var(--border)] bg-white hover:bg-[color:var(--muted)]/60"
+                      }`}
                       onClick={() => setSelectedOrganizationId(organization.id)}
                       type="button"
                     >
-                      <div>
-                        <strong>{organization.name}</strong>
-                        <p>{organization.description ?? "No description yet."}</p>
-                      </div>
-                      <div className="selector-meta">
-                        <span>{organization._count?.elections ?? 0} elections</span>
-                        <span>{organization._count?.members ?? 1} members</span>
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold">{organization.name}</p>
+                            <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                              {organization.description ?? "No description yet."}
+                            </p>
+                          </div>
+                          <StatusPill status={organization.themePreset} />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="outline">{organization._count?.elections ?? 0} elections</Badge>
+                          <Badge variant="outline">{organization._count?.members ?? 1} members</Badge>
+                        </div>
                       </div>
                     </button>
                   );
                 })}
               </div>
             )}
-          </section>
-        </aside>
+          </SectionCard>
+        </div>
 
-        <div className="dashboard-main">
+        <div className="space-y-6">
           {!selectedOrganization ? (
             <EmptyPanel
               title="No organization selected"
-              body="Create an organization from the sidebar or select one to begin configuring elections."
+              body="Create an organization or choose one from the list."
             />
           ) : (
             <>
-              <section className="panel workspace-header-panel">
-                <div>
-                  <p className="eyebrow">Selected organization</p>
-                  <h2>{selectedOrganization.name}</h2>
-                  <p className="muted">
-                    {selectedOrganization.description ?? "Add elections, offices, and candidates for this organization."}
-                  </p>
-                </div>
-                <div className="workspace-meta">
-                  <span>{selectedOrganization._count?.elections ?? elections.length} elections</span>
-                  <span>{selectedOrganization._count?.members ?? 1} members</span>
-                  {membershipRole ? <StatusPill status={membershipRole} /> : null}
-                </div>
-              </section>
-
-              <section className="workspace-story-grid">
-                <article className="panel workflow-spotlight">
-                  <p className="eyebrow">Recommended next step</p>
-                  <h3>{recommendedStep.title}</h3>
-                  <p className="muted">{recommendedStep.body}</p>
-                  <div className="workflow-spotlight__chips">
-                    {selectedElectionId ? (
-                      <span>
-                        Election: <strong>{electionDetail?.title ?? "Loading election..."}</strong>
-                      </span>
-                    ) : (
-                      <span>No election selected yet</span>
-                    )}
-                    <span>{currentOffices.length} offices configured</span>
-                    <span>{candidateCount} candidates loaded</span>
+              <SectionCard
+                title={selectedOrganization.name}
+                description={selectedOrganization.description ?? "Set up elections, members, and branding for this organization."}
+                action={
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline">{selectedOrganization._count?.elections ?? elections.length} elections</Badge>
+                    <Badge variant="outline">{selectedOrganization._count?.members ?? 1} members</Badge>
+                    {membershipRole ? <StatusPill status={membershipRole} /> : null}
                   </div>
-                </article>
-
-                <article className="panel election-snapshot">
-                  <p className="eyebrow">Election snapshot</p>
-                  <div className="election-snapshot__grid">
-                    <div>
-                      <span className="detail-label">Current status</span>
-                      <strong>{electionDetail ? toTitleCase(electionDetail.status) : "No election selected"}</strong>
-                    </div>
-                    <div>
-                      <span className="detail-label">Voting state</span>
-                      <strong>
-                        {hasSubmittedBallot
-                          ? "Your ballot is in"
-                          : electionDetail?.status === "OPEN"
-                            ? "Accepting ballots"
-                            : "Not accepting ballots"}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="detail-label">Results</span>
-                      <strong>{hasResults ? "Tallies available" : "No tallies yet"}</strong>
-                    </div>
-                  </div>
-                </article>
-              </section>
-
-              <section className="workflow-grid" aria-label="Workflow stages">
-                {workflowCards.map((card) => (
-                  <WorkflowCard
-                    key={card.section}
-                    description={card.description}
-                    isActive={activeSection === card.section}
-                    isDisabled={card.disabled}
-                    label={sectionLabelMap[card.section]}
-                    meta={card.meta}
-                    onClick={() => setActiveSection(card.section)}
-                    tone={card.tone}
-                  />
-                ))}
-              </section>
-
-              {activeSection === "members" ? (
-                selectedOrganization ? (
-                  canManageSelectedOrganization ? (
-                    <section className="panel member-management-panel">
-                      <div className="panel-header">
-                        <div>
-                          <p className="eyebrow">Organization members</p>
-                          <h2>Invite people and control voter eligibility</h2>
-                        </div>
-                        {isLoadingMembers ? <span className="muted">Refreshing...</span> : null}
-                      </div>
-
-                      <div className="form-grid">
-                        <form className="stack-form compact-form" onSubmit={handleCreateMember}>
-                          <h3>Add or invite member</h3>
-                          <label>
-                            First name
-                            <input
-                              required
-                              value={memberForm.firstName}
-                              onChange={(event) =>
-                                setMemberForm((current) => ({ ...current, firstName: event.target.value }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            Last name
-                            <input
-                              required
-                              value={memberForm.lastName}
-                              onChange={(event) =>
-                                setMemberForm((current) => ({ ...current, lastName: event.target.value }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            Email
-                            <input
-                              required
-                              type="email"
-                              value={memberForm.email}
-                              onChange={(event) =>
-                                setMemberForm((current) => ({ ...current, email: event.target.value }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            Organization role
-                            <select
-                              value={memberForm.role}
-                              onChange={(event) =>
-                                setMemberForm((current) => ({ ...current, role: event.target.value }))
-                              }
-                            >
-                              {membershipRoles.map((role) => (
-                                <option key={role} value={role}>
-                                  {toTitleCase(role)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <button
-                            className="primary-button"
-                            disabled={activeAction === "create-member"}
-                            type="submit"
-                          >
-                            {activeAction === "create-member" ? "Saving..." : "Add member"}
-                          </button>
-                        </form>
-
-                        <section className="panel member-role-guide">
-                          <h3>Role guide</h3>
-                          <div className="member-role-guide__list">
-                            <div>
-                              <strong>Owner</strong>
-                              <p>Full organization control, counted as manager, and eligible to vote.</p>
-                            </div>
-                            <div>
-                              <strong>Admin</strong>
-                              <p>Can manage elections and members, and is also eligible to vote.</p>
-                            </div>
-                            <div>
-                              <strong>Voter</strong>
-                              <p>Can access ballots but cannot manage organization settings.</p>
-                            </div>
-                            <div>
-                              <strong>Member</strong>
-                              <p>Basic membership only. This role cannot access ballots.</p>
-                            </div>
-                          </div>
-                        </section>
-                      </div>
-
-                      {members.length === 0 ? (
-                        <p className="muted">No members yet beyond the initial organization owner.</p>
-                      ) : (
-                        <div className="member-list">
-                          {members.map((member) => (
-                            <article className="member-card" key={member.id}>
-                              <div className="member-card__identity">
-                                <div>
-                                  <strong>
-                                    {member.user.firstName} {member.user.lastName}
-                                  </strong>
-                                  <p>{member.user.email}</p>
-                                </div>
-                                <div className="selector-meta">
-                                  <StatusPill status={member.role} />
-                                  <span>{member.canVote ? "Eligible voter" : "No ballot access"}</span>
-                                  <span>{toTitleCase(member.user.status)}</span>
-                                </div>
-                              </div>
-
-                              <div className="member-card__controls">
-                                <label>
-                                  Role
-                                  <select
-                                    disabled={activeAction === `member-role-${member.id}`}
-                                    value={member.role}
-                                    onChange={(event) => void handleUpdateMemberRole(member.id, event.target.value)}
-                                  >
-                                    {membershipRoles.map((role) => (
-                                      <option key={role} value={role}>
-                                        {toTitleCase(role)}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                                <div className="member-card__summary">
-                                  <span className="detail-label">Platform role</span>
-                                  <strong>{toTitleCase(member.user.role)}</strong>
-                                </div>
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      )}
-                    </section>
-                  ) : (
-                    <EmptyPanel
-                      title="Member management is restricted"
-                      body="Only organization managers can invite members or adjust who is eligible to vote."
-                    />
-                  )
-                ) : (
-                  <EmptyPanel
-                    title="No organization selected"
-                    body="Choose an organization first so you can manage members and voter eligibility."
-                  />
-                )
-              ) : null}
-
-              {activeSection === "setup" ? (
-                <div className="workspace-grid">
-                  <section className="panel">
-                    <div className="panel-header">
-                      <h2>Elections</h2>
-                      {isLoadingElections ? <span className="muted">Refreshing...</span> : null}
-                    </div>
-
-                    <form className="stack-form compact-form" onSubmit={handleCreateElection}>
-                      <label>
-                        Election title
-                        <input
-                          required
-                          value={electionForm.title}
-                          onChange={(event) =>
-                            setElectionForm((current) => ({ ...current, title: event.target.value }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Description
-                        <textarea
-                          rows={3}
-                          value={electionForm.description}
-                          onChange={(event) =>
-                            setElectionForm((current) => ({
-                              ...current,
-                              description: event.target.value
-                            }))
-                          }
-                        />
-                      </label>
-                      <button
-                        className="primary-button"
-                        disabled={activeAction === "create-election"}
-                        type="submit"
-                      >
-                        {activeAction === "create-election" ? "Creating..." : "Create election"}
-                      </button>
-                    </form>
-
-                    {elections.length === 0 ? (
-                      <p className="muted">No elections yet. Create the first one above.</p>
-                    ) : (
-                      <div className="selector-list">
-                        {elections.map((election) => (
-                          <button
-                            key={election.id}
-                            className={election.id === selectedElectionId ? "selector-card active" : "selector-card"}
-                            onClick={() => setSelectedElectionId(election.id)}
-                            type="button"
-                          >
-                            <div>
-                              <strong>{election.title}</strong>
-                              <p>{election.description ?? "No description yet."}</p>
-                            </div>
-                            <div className="selector-meta">
-                              <StatusPill status={election.status} />
-                              <span>{election._count?.offices ?? 0} offices</span>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-
-                  {!selectedElectionId || !electionDetail ? (
-                    <EmptyPanel
-                      title="Select an election"
-                      body="Choose an election from the list to manage offices, candidates, ballots, and results."
-                    />
-                  ) : (
-                    <section className="panel">
-                      <div className="panel-header">
-                        <div>
-                          <p className="eyebrow">Election detail</p>
-                          <h2>{electionDetail.title}</h2>
-                        </div>
-                        <StatusPill status={electionDetail.status} />
-                      </div>
-
-                      <p className="muted">
-                        {electionDetail.description ?? "No election description has been provided yet."}
-                      </p>
-
-                      <div className="detail-grid">
-                        <div>
-                          <span className="detail-label">Start</span>
-                          <strong>{formatDateTime(electionDetail.startsAt)}</strong>
-                        </div>
-                        <div>
-                          <span className="detail-label">End</span>
-                          <strong>{formatDateTime(electionDetail.endsAt)}</strong>
-                        </div>
-                        <div>
-                          <span className="detail-label">Ballots</span>
-                          <strong>{electionDetail._count?.ballots ?? 0}</strong>
-                        </div>
-                      </div>
-
-                      {canManageSelectedOrganization ? (
-                        <div className="status-button-row">
-                          {electionStatuses.map((status) => (
-                            <button
-                              key={status}
-                              className={electionDetail.status === status ? "status-button active" : "status-button"}
-                              disabled={activeAction === `status-${status}` || isLoadingElectionWorkspace}
-                              onClick={() => void handleElectionStatusUpdate(status)}
-                              type="button"
-                            >
-                              {toTitleCase(status)}
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="muted">Only organization managers can change election status.</p>
-                      )}
-                    </section>
-                  )}
-                </div>
-              ) : null}
-
-              {activeSection === "structure" ? (
-                hasElectionWorkspace && electionDetail ? (
-                  <section className="panel">
-                    <div className="panel-header">
-                      <h2>Offices and candidates</h2>
-                      {isLoadingElectionWorkspace ? <span className="muted">Refreshing...</span> : null}
-                    </div>
-
-                    {canManageSelectedOrganization ? (
-                      <div className="form-grid">
-                        <form className="stack-form compact-form" onSubmit={handleCreateOffice}>
-                          <h3>Create office</h3>
-                          <label>
-                            Office title
-                            <input
-                              required
-                              value={officeForm.title}
-                              onChange={(event) =>
-                                setOfficeForm((current) => ({ ...current, title: event.target.value }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            Seats
-                            <input
-                              min={1}
-                              required
-                              type="number"
-                              value={officeForm.seats}
-                              onChange={(event) =>
-                                setOfficeForm((current) => ({
-                                  ...current,
-                                  seats: Number(event.target.value)
-                                }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            Description
-                            <textarea
-                              rows={3}
-                              value={officeForm.description}
-                              onChange={(event) =>
-                                setOfficeForm((current) => ({
-                                  ...current,
-                                  description: event.target.value
-                                }))
-                              }
-                            />
-                          </label>
-                          <button
-                            className="primary-button"
-                            disabled={activeAction === "create-office"}
-                            type="submit"
-                          >
-                            {activeAction === "create-office" ? "Creating..." : "Add office"}
-                          </button>
-                        </form>
-
-                        <form className="stack-form compact-form" onSubmit={handleCreateCandidate}>
-                          <h3>Create candidate</h3>
-                          <label>
-                            Office
-                            <select
-                              required
-                              value={candidateForm.officeId}
-                              onChange={(event) =>
-                                setCandidateForm((current) => ({
-                                  ...current,
-                                  officeId: event.target.value
-                                }))
-                              }
-                            >
-                              {currentOffices.map((office) => (
-                                <option key={office.id} value={office.id}>
-                                  {office.title}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            Candidate name
-                            <input
-                              required
-                              value={candidateForm.displayName}
-                              onChange={(event) =>
-                                setCandidateForm((current) => ({
-                                  ...current,
-                                  displayName: event.target.value
-                                }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            Candidate bio
-                            <textarea
-                              rows={3}
-                              value={candidateForm.bio}
-                              onChange={(event) =>
-                                setCandidateForm((current) => ({ ...current, bio: event.target.value }))
-                              }
-                            />
-                          </label>
-                          <button
-                            className="primary-button"
-                            disabled={activeAction === "create-candidate" || currentOffices.length === 0}
-                            type="submit"
-                          >
-                            {activeAction === "create-candidate" ? "Creating..." : "Add candidate"}
-                          </button>
-                        </form>
-                      </div>
-                    ) : null}
-
-                    {electionDetail.offices.length === 0 ? (
-                      <p className="muted">No offices yet. Create the first office to begin building the ballot.</p>
-                    ) : (
-                      <div className="office-grid">
-                        {electionDetail.offices.map((office) => (
-                          <article className="office-card" key={office.id}>
-                            <div className="office-card__header">
-                              <div>
-                                <h3>{office.title}</h3>
-                                <p>{office.description ?? "No office description yet."}</p>
-                              </div>
-                              <span className="seat-count">{office.seats} seat{office.seats > 1 ? "s" : ""}</span>
-                            </div>
-                            <div className="candidate-stack">
-                              {office.candidates.length === 0 ? (
-                                <p className="muted">No candidates yet.</p>
-                              ) : (
-                                office.candidates.map((candidate) => (
-                                  <div className="candidate-item" key={candidate.id}>
-                                    <strong>{candidate.displayName}</strong>
-                                    <p>{candidate.bio ?? "No bio supplied."}</p>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                ) : (
-                  <EmptyPanel
-                    title="Election structure is empty"
-                    body="Select an election in Setup to create offices and candidates."
-                  />
-                )
-              ) : null}
-
-              {activeSection === "vote" ? (
-                hasElectionWorkspace ? (
-                  <section className="panel ballot-panel">
-                    <div className="panel-header">
-                      <div>
-                        <h2>Ballot</h2>
-                        <p className="muted">
-                          {ballotState?.ballot
-                            ? "This account has already submitted a ballot."
-                            : "Select one candidate per office and submit when ready."}
+                }
+              >
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(18rem,0.7fr)]">
+                  <Card className="border-white/70 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--card)_94%,white),color-mix(in_srgb,var(--secondary)_55%,white))]">
+                    <CardContent className="space-y-4 p-6">
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[color:var(--primary)]">
+                          Next step
                         </p>
+                        <h3 className="font-[family:var(--font-heading)] text-3xl leading-tight">
+                          {recommendedStep.title}
+                        </h3>
+                        <p className="text-sm leading-6 text-[color:var(--muted-foreground)]">{recommendedStep.body}</p>
                       </div>
-                      {ballotState ? <StatusPill status={ballotState.election.status} /> : null}
-                    </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant="outline">
+                          {selectedElectionId ? `Election: ${electionDetail?.title ?? "Loading..."}` : "No election selected"}
+                        </Badge>
+                        <Badge variant="outline">{currentOffices.length} offices</Badge>
+                        <Badge variant="outline">{candidateCount} candidates</Badge>
+                        <Badge variant="outline">{eligibleVoterCount} eligible voters</Badge>
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        <Button onClick={() => openWorkspaceSection(recommendedStep.section)} type="button">
+                          {recommendedStep.actionLabel}
+                        </Button>
+                        {selectedElectionId ? (
+                          <Button onClick={() => openWorkspaceSection("setup")} type="button" variant="outline">
+                            Review election status
+                          </Button>
+                        ) : null}
+                      </div>
+                    </CardContent>
+                  </Card>
 
-                    {!ballotState ? (
-                      <p className="muted">Select an election to load the ballot.</p>
-                    ) : ballotState.offices.length === 0 ? (
-                      <p className="muted">This election has no offices yet, so there is no ballot to cast.</p>
-                    ) : (
-                      <form className="stack-form" onSubmit={handleSubmitBallot}>
-                        {ballotState.offices.map((office) => (
-                          <label key={office.id}>
-                            {office.title}
-                            <select
-                              disabled={Boolean(ballotState.ballot) || ballotState.election.status !== "OPEN"}
-                              value={ballotSelections[office.id] ?? ""}
-                              onChange={(event) =>
-                                setBallotSelections((current) => ({
-                                  ...current,
-                                  [office.id]: event.target.value
-                                }))
-                              }
-                            >
-                              <option value="">Choose a candidate</option>
-                              {office.candidates.map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>
-                                  {candidate.displayName}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        ))}
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                    {readinessItems.map((item) => (
+                      <ReadinessItem key={item.label} label={item.label} meta={item.meta} tone={item.tone} />
+                    ))}
+                  </div>
+                </div>
 
-                        <button
-                          className="primary-button"
-                          disabled={
-                            activeAction === "submit-ballot" ||
-                            Boolean(ballotState.ballot) ||
-                            ballotState.election.status !== "OPEN"
-                          }
-                          type="submit"
-                        >
-                          {ballotState.ballot
-                            ? "Ballot already submitted"
-                            : activeAction === "submit-ballot"
-                              ? "Submitting..."
-                              : "Submit ballot"}
-                        </button>
-                      </form>
-                    )}
-                  </section>
-                ) : (
-                  <EmptyPanel
-                    title="No ballot available yet"
-                    body="Create and select an election in Setup before opening voting."
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {workflowCards.map((card) => (
+                    <WorkflowCard
+                      key={card.section}
+                      description={card.description}
+                      isActive={activeSection === card.section}
+                      isDisabled={card.disabled}
+                      label={sectionLabelMap[card.section]}
+                      meta={card.meta}
+                      onClick={() => openWorkspaceSection(card.section)}
+                      tone={card.tone}
+                    />
+                  ))}
+                </div>
+              </SectionCard>
+
+              {canManageSelectedOrganization ? (
+                <SectionCard
+                  title="Organization theme"
+                  description="Choose the preset and approved colors for this organization. Changes show up right away."
+                >
+                  <OrganizationThemeForm
+                    value={themeForm}
+                    onChange={setThemeForm}
+                    onSubmit={() => void handleUpdateTheme()}
+                    isSaving={activeAction === "update-theme"}
                   />
-                )
+                </SectionCard>
               ) : null}
 
-              {activeSection === "results" ? (
-                hasElectionWorkspace ? (
-                  <section className="panel results-panel">
-                    <div className="panel-header">
-                      <div>
-                        <h2>Results</h2>
-                        <p className="muted">Manager-facing tally for the selected election.</p>
-                      </div>
-                    </div>
+              <div id="workspace-sections">
+                <Tabs value={activeSection} onValueChange={(value) => setActiveSection(value as WorkspaceSection)}>
+                  <SectionCard
+                    title="Election lifecycle"
+                    description={sectionHintMap[activeSection]}
+                  >
+                    <TabsList className="grid w-full gap-2 bg-transparent p-0 md:grid-cols-3 xl:grid-cols-6">
+                      {workspaceSections.map((section) => (
+                        <TabsTrigger
+                          key={section}
+                          value={section}
+                          disabled={sectionDisabled(section)}
+                          className="border border-[color:var(--border)] bg-white data-[state=active]:border-[color:var(--primary)]/30 data-[state=active]:bg-[color:var(--secondary)]/70 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {sectionLabelMap[section]}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </SectionCard>
 
-                    {resultsError ? (
-                      <p className="muted">{resultsError}</p>
-                    ) : !results || results.offices.length === 0 ? (
-                      <p className="muted">No counted results yet.</p>
-                    ) : (
-                      <div className="results-stack">
-                        {results.offices.map((office) => (
-                          <article className="result-card" key={office.officeId}>
-                            <div className="result-card__header">
-                              <div>
-                                <h3>{office.title}</h3>
-                                <p>{office.totalVotes} total votes counted</p>
-                              </div>
-                              <span className="seat-count">{office.seats} seat{office.seats > 1 ? "s" : ""}</span>
+                  <TabsContent value="members">
+                  {!selectedOrganization ? (
+                    <EmptyPanel
+                      title="No organization selected"
+                      body="Choose an organization first."
+                    />
+                  ) : !canManageSelectedOrganization ? (
+                    <EmptyPanel
+                      title="Member access is restricted"
+                      body="Only organization managers can add members or change ballot access."
+                    />
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+                        <SectionCard
+                          title="Invite or add member"
+                          description="Add people to this organization and choose their role."
+                          action={isLoadingMembers ? <Badge variant="outline">Refreshing...</Badge> : undefined}
+                        >
+                          <form className="grid gap-4 md:grid-cols-2" onSubmit={handleCreateMember}>
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium" htmlFor="member-first-name">
+                                First name
+                              </label>
+                              <Input
+                                id="member-first-name"
+                                required
+                                value={memberForm.firstName}
+                                onChange={(event) =>
+                                  setMemberForm((current) => ({ ...current, firstName: event.target.value }))
+                                }
+                              />
                             </div>
-                            <div className="result-candidates">
-                              {[...office.candidates]
-                                .sort((left, right) => right.votes - left.votes)
-                                .map((candidate) => {
-                                  const percentage =
-                                    office.totalVotes === 0
-                                      ? 0
-                                      : Math.round((candidate.votes / office.totalVotes) * 100);
+                            <div className="space-y-2">
+                              <label className="text-sm font-medium" htmlFor="member-last-name">
+                                Last name
+                              </label>
+                              <Input
+                                id="member-last-name"
+                                required
+                                value={memberForm.lastName}
+                                onChange={(event) =>
+                                  setMemberForm((current) => ({ ...current, lastName: event.target.value }))
+                                }
+                              />
+                            </div>
+                            <div className="space-y-2 md:col-span-2">
+                              <label className="text-sm font-medium" htmlFor="member-email">
+                                Email
+                              </label>
+                              <Input
+                                id="member-email"
+                                required
+                                type="email"
+                                value={memberForm.email}
+                                onChange={(event) =>
+                                  setMemberForm((current) => ({ ...current, email: event.target.value }))
+                                }
+                              />
+                            </div>
+                            <div className="space-y-2 md:col-span-2">
+                              <label className="text-sm font-medium">Organization role</label>
+                              <Select
+                                value={memberForm.role}
+                                onValueChange={(value) =>
+                                  setMemberForm((current) => ({ ...current, role: value }))
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Choose a role" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {membershipRoles.map((role) => (
+                                    <SelectItem key={role} value={role}>
+                                      {toTitleCase(role)}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <Button
+                              className="md:col-span-2"
+                              disabled={activeAction === "create-member"}
+                              type="submit"
+                            >
+                              {activeAction === "create-member" ? "Saving member..." : "Add member"}
+                            </Button>
+                          </form>
+                        </SectionCard>
+
+                        <SectionCard
+                          title="Role guide"
+                          description="These roles control access and permissions."
+                        >
+                          <div className="grid gap-3">
+                            {[
+                              ["Owner", "Full control of the organization, including voting access."],
+                              ["Admin", "Can manage elections and members, and can also vote."],
+                              ["Voter", "Can vote, but cannot manage organization settings."],
+                              ["Member", "Basic membership only. No ballot access."]
+                            ].map(([title, body]) => (
+                              <div
+                                key={title}
+                                className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/50 p-4"
+                              >
+                                <p className="font-semibold">{title}</p>
+                                <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">{body}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </SectionCard>
+                      </div>
+
+                      <SectionCard
+                        title="Organization roster"
+                        description="Everyone currently added to this organization."
+                      >
+                        {members.length === 0 ? (
+                          <SharedEmptyState
+                            title="No members yet"
+                            body="Only the organization owner has been added so far."
+                          />
+                        ) : (
+                          <div className="grid gap-4">
+                            {members.map((member) => (
+                              <Card key={member.id} className="border-white/70 bg-white/95">
+                                <CardContent className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-center">
+                                  <div className="space-y-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <p className="font-semibold">
+                                        {member.user.firstName} {member.user.lastName}
+                                      </p>
+                                      <StatusPill status={member.role} />
+                                      <Badge variant="outline">
+                                        {member.canVote ? "Eligible voter" : "No ballot access"}
+                                      </Badge>
+                                      <Badge variant="outline">{toTitleCase(member.user.status)}</Badge>
+                                    </div>
+                                    <p className="text-sm text-[color:var(--muted-foreground)]">{member.user.email}</p>
+                                  </div>
+                                  <div className="grid gap-3">
+                                    <div className="space-y-2">
+                                      <label className="text-sm font-medium">Role</label>
+                                      <Select
+                                        value={member.role}
+                                        onValueChange={(value) => void handleUpdateMemberRole(member.id, value)}
+                                        disabled={activeAction === `member-role-${member.id}`}
+                                      >
+                                        <SelectTrigger>
+                                          <SelectValue placeholder="Choose a role" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {membershipRoles.map((role) => (
+                                            <SelectItem key={role} value={role}>
+                                              {toTitleCase(role)}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <p className="text-sm text-[color:var(--muted-foreground)]">
+                                      Platform role: <span className="font-medium text-[color:var(--foreground)]">{toTitleCase(member.user.role)}</span>
+                                    </p>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </div>
+                        )}
+                      </SectionCard>
+
+                      {!selectedElectionId ? (
+                        <EmptyPanel
+                          title="Choose an election"
+                          body="Pick an election in Setup before importing a voter registry or sending invites."
+                        />
+                      ) : (
+                        <>
+                          <div className="grid gap-6 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+                            <SectionCard
+                              title="Voter registry import"
+                              description="Upload a CSV or XLSX file with member_unique_id, full_name, age, and email."
+                              action={isLoadingEligibility ? <Badge variant="outline">Refreshing...</Badge> : undefined}
+                            >
+                              <form className="space-y-4" onSubmit={handlePreviewEligibilityImport}>
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium" htmlFor="registry-file">
+                                    Registry file
+                                  </label>
+                                  <Input
+                                    key={importInputKey}
+                                    id="registry-file"
+                                    accept=".csv,.xlsx"
+                                    type="file"
+                                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                                      setRegistryFile(event.target.files?.[0] ?? null)
+                                    }
+                                  />
+                                  <p className="text-sm text-[color:var(--muted-foreground)]">
+                                    {registryFile ? registryFile.name : "Choose a CSV or XLSX file to preview."}
+                                  </p>
+                                </div>
+
+                                <div className="flex flex-wrap gap-3">
+                                  <Button
+                                    disabled={activeAction === "preview-registry-import" || !registryFile}
+                                    type="submit"
+                                  >
+                                    {activeAction === "preview-registry-import" ? "Previewing..." : "Preview registry"}
+                                  </Button>
+                                  {importPreview ? (
+                                    <Button
+                                      disabled={activeAction === "commit-registry-import"}
+                                      onClick={() => void handleCommitEligibilityImport()}
+                                      type="button"
+                                      variant="outline"
+                                    >
+                                      {activeAction === "commit-registry-import" ? "Committing..." : "Commit accepted rows"}
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              </form>
+
+                              {importPreview ? (
+                                <div className="space-y-4">
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <MetricCard label="Accepted rows" value={importPreview.summary.acceptedCount} />
+                                    <MetricCard label="Rejected rows" value={importPreview.summary.rejectedCount} />
+                                  </div>
+
+                                  <div className="grid gap-4 xl:grid-cols-2">
+                                    <div className="space-y-3">
+                                      <p className="text-sm font-medium">Accepted rows</p>
+                                      {importPreview.acceptedRows.length === 0 ? (
+                                        <div className="rounded-[calc(var(--radius)-0.25rem)] border border-dashed border-[color:var(--border)] p-4 text-sm text-[color:var(--muted-foreground)]">
+                                          No valid rows yet.
+                                        </div>
+                                      ) : (
+                                        importPreview.acceptedRows.slice(0, 8).map((row) => (
+                                          <div
+                                            key={`accepted-${row.rowNumber}-${row.memberUniqueId}`}
+                                            className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-white p-4"
+                                          >
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <Badge variant="outline">Row {row.rowNumber}</Badge>
+                                              <p className="font-semibold">{row.fullName}</p>
+                                            </div>
+                                            <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">
+                                              {row.memberUniqueId} · {row.email} · Age {row.age}
+                                            </p>
+                                          </div>
+                                        ))
+                                      )}
+                                      {importPreview.acceptedRows.length > 8 ? (
+                                        <p className="text-sm text-[color:var(--muted-foreground)]">
+                                          Showing the first 8 accepted rows.
+                                        </p>
+                                      ) : null}
+                                    </div>
+
+                                    <div className="space-y-3">
+                                      <p className="text-sm font-medium">Rejected rows</p>
+                                      {importPreview.rejectedRows.length === 0 ? (
+                                        <div className="rounded-[calc(var(--radius)-0.25rem)] border border-dashed border-[color:var(--border)] p-4 text-sm text-[color:var(--muted-foreground)]">
+                                          No row errors found.
+                                        </div>
+                                      ) : (
+                                        importPreview.rejectedRows.slice(0, 8).map((row) => (
+                                          <div
+                                            key={`rejected-${row.rowNumber}`}
+                                            className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--warning)]/30 bg-[color:var(--warning)]/10 p-4"
+                                          >
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <Badge variant="outline">Row {row.rowNumber}</Badge>
+                                              <p className="font-semibold">
+                                                {row.values.full_name ?? row.values.member_unique_id ?? "Row error"}
+                                              </p>
+                                            </div>
+                                            <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">
+                                              {row.errors.join(" ")}
+                                            </p>
+                                          </div>
+                                        ))
+                                      )}
+                                      {importPreview.rejectedRows.length > 8 ? (
+                                        <p className="text-sm text-[color:var(--muted-foreground)]">
+                                          Showing the first 8 rejected rows.
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </SectionCard>
+
+                            <SectionCard
+                              title="Election eligibility"
+                              description="Review the voter registry for the selected election and send invite emails."
+                              action={
+                                <div className="flex flex-wrap gap-2">
+                                  <Badge variant="outline">{selectedElectionSummary?.title ?? "Election selected"}</Badge>
+                                  <Button
+                                    disabled={activeAction === "send-election-invites" || !eligibilityRoster}
+                                    onClick={() => void handleSendElectionInvites()}
+                                    type="button"
+                                    variant="outline"
+                                  >
+                                    {activeAction === "send-election-invites" ? "Sending..." : "Send invites"}
+                                  </Button>
+                                </div>
+                              }
+                            >
+                              {!eligibilityRoster ? (
+                                <SharedEmptyState
+                                  title="No voter registry yet"
+                                  body="Import and commit a voter registry to start managing election eligibility."
+                                />
+                              ) : (
+                                <div className="space-y-5">
+                                  <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+                                    <MetricCard label="Eligible" value={eligibilityRoster.summary.importedEligibleCount} />
+                                    <MetricCard label="Invites sent" value={eligibilityRoster.summary.invitesSentCount} />
+                                    <MetricCard label="Claimed" value={eligibilityRoster.summary.claimedCount} />
+                                    <MetricCard label="Voted" value={eligibilityRoster.summary.votedCount} />
+                                    <MetricCard label="Revoked" value={eligibilityRoster.summary.revokedCount} />
+                                    <MetricCard label="Expired" value={eligibilityRoster.summary.expiredCount} />
+                                  </div>
+
+                                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                    <div className="space-y-1">
+                                      <p className="text-sm font-medium">Filter by status</p>
+                                      <p className="text-sm text-[color:var(--muted-foreground)]">
+                                        Ballots submitted: {eligibilityRoster.summary.ballotsSubmitted}
+                                      </p>
+                                    </div>
+                                    <Select
+                                      value={eligibilityFilter}
+                                      onValueChange={(value) => setEligibilityFilter(value as EligibilityFilterValue)}
+                                    >
+                                      <SelectTrigger className="w-full md:w-56">
+                                        <SelectValue placeholder="Filter status" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {eligibilityStatusOptions.map((status) => (
+                                          <SelectItem key={status} value={status}>
+                                            {status === "ALL" ? "All statuses" : toTitleCase(status)}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  {eligibilityRoster.eligibilities.length === 0 ? (
+                                    <div className="rounded-[calc(var(--radius)-0.25rem)] border border-dashed border-[color:var(--border)] p-6 text-sm text-[color:var(--muted-foreground)]">
+                                      No records match this filter yet.
+                                    </div>
+                                  ) : (
+                                    <div className="grid gap-4">
+                                      {eligibilityRoster.eligibilities.map((eligibility) => (
+                                        <Card key={eligibility.id} className="border-white/70 bg-white/95">
+                                          <CardContent className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
+                                            <div className="space-y-2">
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <p className="font-semibold">{eligibility.fullName}</p>
+                                                <StatusPill status={eligibility.status} />
+                                                <Badge variant="outline">{eligibility.memberUniqueId}</Badge>
+                                              </div>
+                                              <p className="text-sm text-[color:var(--muted-foreground)]">
+                                                {eligibility.email} · Age {eligibility.age}
+                                              </p>
+                                              <div className="flex flex-wrap gap-2">
+                                                {eligibility.importJob ? (
+                                                  <Badge variant="outline">
+                                                    {eligibility.importJob.filename} · {eligibility.importJob.sourceFormat}
+                                                  </Badge>
+                                                ) : null}
+                                                {eligibility.latestInvite?.sentAt ? (
+                                                  <Badge variant="outline">
+                                                    Sent {formatDateTime(eligibility.latestInvite.sentAt)}
+                                                  </Badge>
+                                                ) : (
+                                                  <Badge variant="outline">Not sent yet</Badge>
+                                                )}
+                                                {eligibility.claimedAt ? (
+                                                  <Badge variant="outline">Claimed {formatDateTime(eligibility.claimedAt)}</Badge>
+                                                ) : null}
+                                                {eligibility.votedAt ? (
+                                                  <Badge variant="outline">Voted {formatDateTime(eligibility.votedAt)}</Badge>
+                                                ) : null}
+                                              </div>
+                                            </div>
+                                            <div className="space-y-3">
+                                              <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/50 p-4">
+                                                <p className="text-sm text-[color:var(--muted-foreground)]">
+                                                  {eligibility.latestInvite
+                                                    ? eligibility.latestInvite.revokedAt
+                                                      ? "Latest invite was revoked."
+                                                      : eligibility.latestInvite.usedAt
+                                                        ? "Latest invite has been used."
+                                                        : `Invite expires ${formatDateTime(eligibility.latestInvite.expiresAt)}.`
+                                                    : "No invite has been sent yet."}
+                                                </p>
+                                              </div>
+                                              <div className="flex flex-wrap gap-2">
+                                                <Button
+                                                  disabled={
+                                                    activeAction === `resend-election-invite-${eligibility.id}` ||
+                                                    ["CLAIMED", "VOTED", "REVOKED", "EXPIRED"].includes(eligibility.status)
+                                                  }
+                                                  onClick={() => void handleResendElectionInvite(eligibility.id)}
+                                                  type="button"
+                                                  variant="outline"
+                                                >
+                                                  {activeAction === `resend-election-invite-${eligibility.id}` ? "Resending..." : eligibility.latestInvite?.sentAt ? "Resend invite" : "Send invite"}
+                                                </Button>
+                                              </div>
+                                              {eligibility.latestInvite?.revokedAt ? (
+                                                <p className="text-sm text-[color:var(--muted-foreground)]">
+                                                  Invite revoked {formatDateTime(eligibility.latestInvite.revokedAt)}.
+                                                </p>
+                                              ) : null}
+                                            </div>
+                                          </CardContent>
+                                        </Card>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </SectionCard>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  </TabsContent>
+
+                  <TabsContent value="setup">
+                  <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+                    <SectionCard
+                      title="Election setup"
+                      description="Create elections and choose the one you want to work on."
+                      action={isLoadingElections ? <Badge variant="outline">Refreshing...</Badge> : undefined}
+                    >
+                      <form className="space-y-4" onSubmit={handleCreateElection}>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium" htmlFor="election-title">
+                            Election title
+                          </label>
+                          <Input
+                            id="election-title"
+                            required
+                            value={electionForm.title}
+                            onChange={(event) =>
+                              setElectionForm((current) => ({ ...current, title: event.target.value }))
+                            }
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium" htmlFor="election-description">
+                            Description
+                          </label>
+                          <Textarea
+                            id="election-description"
+                            rows={3}
+                            value={electionForm.description}
+                            onChange={(event) =>
+                              setElectionForm((current) => ({
+                                ...current,
+                                description: event.target.value
+                              }))
+                            }
+                          />
+                        </div>
+
+                        <Button className="w-full" disabled={activeAction === "create-election"} type="submit">
+                          {activeAction === "create-election" ? "Creating election..." : "Create election"}
+                        </Button>
+                      </form>
+
+                      <div className="space-y-3">
+                        <p className="text-sm font-medium text-[color:var(--foreground)]">Choose active election</p>
+                        {elections.length === 0 ? (
+                          <SharedEmptyState title="No elections yet" body="Create the first election above." />
+                        ) : (
+                          <>
+                            <Select
+                              value={selectedElectionId ?? undefined}
+                              onValueChange={(value) => setSelectedElectionId(value)}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select an election" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {elections.map((election) => (
+                                  <SelectItem key={election.id} value={election.id}>
+                                    {election.title}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <div className="space-y-3">
+                              {elections.map((election) => (
+                                <button
+                                  key={election.id}
+                                  className={`w-full rounded-[calc(var(--radius)-0.25rem)] border p-4 text-left transition ${
+                                    election.id === selectedElectionId
+                                      ? "border-[color:var(--primary)]/30 bg-[color:var(--secondary)]/65"
+                                      : "border-[color:var(--border)] bg-white hover:bg-[color:var(--muted)]/60"
+                                  }`}
+                                  onClick={() => setSelectedElectionId(election.id)}
+                                  type="button"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <p className="font-semibold">{election.title}</p>
+                                      <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                                        {election.description ?? "No description yet."}
+                                      </p>
+                                    </div>
+                                    <StatusPill status={election.status} />
+                                  </div>
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    <Badge variant="outline">{election._count?.offices ?? 0} offices</Badge>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </SectionCard>
+
+                    {!selectedElectionId || !electionDetail ? (
+                      <EmptyPanel
+                        title="Select an election"
+                        body="Choose an election to manage offices, candidates, ballots, and results."
+                      />
+                    ) : (
+                      <SectionCard
+                        title={electionDetail.title}
+                        description={electionDetail.description ?? "No description yet."}
+                        action={<StatusPill status={electionDetail.status} />}
+                      >
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/55 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">Start</p>
+                            <p className="mt-2 font-semibold">{formatDateTime(electionDetail.startsAt)}</p>
+                          </div>
+                          <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/55 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">End</p>
+                            <p className="mt-2 font-semibold">{formatDateTime(electionDetail.endsAt)}</p>
+                          </div>
+                          <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/55 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">Ballots</p>
+                            <p className="mt-2 font-semibold">{electionDetail._count?.ballots ?? 0}</p>
+                          </div>
+                        </div>
+
+                        {canManageSelectedOrganization ? (
+                          <div className="flex flex-wrap gap-2">
+                            {electionStatuses.map((status) => (
+                              <Button
+                                key={status}
+                                variant={electionDetail.status === status ? "default" : "outline"}
+                                disabled={activeAction === `status-${status}` || isLoadingElectionWorkspace}
+                                onClick={() => void handleElectionStatusUpdate(status)}
+                                type="button"
+                              >
+                                {toTitleCase(status)}
+                              </Button>
+                            ))}
+                          </div>
+                        ) : (
+                          <Alert>
+                            <AlertTitle>Read-only election status</AlertTitle>
+                            <AlertDescription>Only organization managers can change election status.</AlertDescription>
+                          </Alert>
+                        )}
+
+                        {selectedElectionSummary ? (
+                          <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-white p-4">
+                            <p className="text-sm text-[color:var(--muted-foreground)]">
+                              This election currently has {selectedElectionSummary._count?.offices ?? 0} office{selectedElectionSummary._count?.offices === 1 ? "" : "s"} in the workspace.
+                            </p>
+                          </div>
+                        ) : null}
+                      </SectionCard>
+                    )}
+                  </div>
+                  </TabsContent>
+
+                  <TabsContent value="structure">
+                  {!hasElectionWorkspace || !electionDetail ? (
+                    <EmptyPanel
+                      title="No election selected"
+                      body="Choose an election in Setup to add offices and candidates."
+                    />
+                  ) : (
+                    <div className="space-y-6">
+                      {canManageSelectedOrganization ? (
+                        <div className="grid gap-6 xl:grid-cols-2">
+                          <SectionCard title="Create office" description="Add the offices voters will choose from.">
+                            <form className="space-y-4" onSubmit={handleCreateOffice}>
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium" htmlFor="office-title">
+                                  Office title
+                                </label>
+                                <Input
+                                  id="office-title"
+                                  required
+                                  value={officeForm.title}
+                                  onChange={(event) =>
+                                    setOfficeForm((current) => ({ ...current, title: event.target.value }))
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium" htmlFor="office-seats">
+                                  Seats
+                                </label>
+                                <Input
+                                  id="office-seats"
+                                  min={1}
+                                  required
+                                  type="number"
+                                  value={officeForm.seats}
+                                  onChange={(event) =>
+                                    setOfficeForm((current) => ({
+                                      ...current,
+                                      seats: Number(event.target.value)
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium" htmlFor="office-description">
+                                  Description
+                                </label>
+                                <Textarea
+                                  id="office-description"
+                                  rows={3}
+                                  value={officeForm.description}
+                                  onChange={(event) =>
+                                    setOfficeForm((current) => ({
+                                      ...current,
+                                      description: event.target.value
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <Button className="w-full" disabled={activeAction === "create-office"} type="submit">
+                                {activeAction === "create-office" ? "Creating office..." : "Add office"}
+                              </Button>
+                            </form>
+                          </SectionCard>
+
+                          <SectionCard title="Create candidate" description="Add a candidate to an office on this ballot.">
+                            <form className="space-y-4" onSubmit={handleCreateCandidate}>
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium">Office</label>
+                                <Select
+                                  value={candidateForm.officeId}
+                                  onValueChange={(value) =>
+                                    setCandidateForm((current) => ({
+                                      ...current,
+                                      officeId: value
+                                    }))
+                                  }
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Choose an office" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {currentOffices.map((office) => (
+                                      <SelectItem key={office.id} value={office.id}>
+                                        {office.title}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium" htmlFor="candidate-name">
+                                  Candidate name
+                                </label>
+                                <Input
+                                  id="candidate-name"
+                                  required
+                                  value={candidateForm.displayName}
+                                  onChange={(event) =>
+                                    setCandidateForm((current) => ({
+                                      ...current,
+                                      displayName: event.target.value
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium" htmlFor="candidate-bio">
+                                  Candidate bio
+                                </label>
+                                <Textarea
+                                  id="candidate-bio"
+                                  rows={3}
+                                  value={candidateForm.bio}
+                                  onChange={(event) =>
+                                    setCandidateForm((current) => ({ ...current, bio: event.target.value }))
+                                  }
+                                />
+                              </div>
+                              <Button
+                                className="w-full"
+                                disabled={activeAction === "create-candidate" || currentOffices.length === 0}
+                                type="submit"
+                              >
+                                {activeAction === "create-candidate" ? "Creating candidate..." : "Add candidate"}
+                              </Button>
+                            </form>
+                          </SectionCard>
+                        </div>
+                      ) : null}
+
+                      <SectionCard
+                        title="Offices and candidates"
+                        description="This is what voters will see on the ballot."
+                        action={isLoadingElectionWorkspace ? <Badge variant="outline">Refreshing...</Badge> : undefined}
+                      >
+                        {electionDetail.offices.length === 0 ? (
+                          <SharedEmptyState
+                            title="No offices yet"
+                            body="Create the first office to begin building the ballot."
+                          />
+                        ) : (
+                          <div className="grid gap-4 xl:grid-cols-2">
+                            {electionDetail.offices.map((office) => (
+                              <Card key={office.id} className="border-white/70 bg-white/95">
+                                <CardContent className="space-y-4 p-5">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <h3 className="font-[family:var(--font-heading)] text-2xl">{office.title}</h3>
+                                      <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                                        {office.description ?? "No description yet."}
+                                      </p>
+                                    </div>
+                                    <Badge variant="outline">
+                                      {office.seats} seat{office.seats > 1 ? "s" : ""}
+                                    </Badge>
+                                  </div>
+                                  <div className="grid gap-3">
+                                    {office.candidates.length === 0 ? (
+                                      <div className="rounded-[calc(var(--radius)-0.25rem)] border border-dashed border-[color:var(--border)] p-4 text-sm text-[color:var(--muted-foreground)]">
+                                        No candidates yet.
+                                      </div>
+                                    ) : (
+                                      office.candidates.map((candidate) => (
+                                        <div
+                                          key={candidate.id}
+                                          className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/50 p-4"
+                                        >
+                                          <p className="font-semibold">{candidate.displayName}</p>
+                                          <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                                            {candidate.bio ?? "No bio yet."}
+                                          </p>
+                                        </div>
+                                      ))
+                                    )}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </div>
+                        )}
+                      </SectionCard>
+                    </div>
+                  )}
+                  </TabsContent>
+
+                  <TabsContent value="vote">
+                  {!hasElectionWorkspace ? (
+                    <EmptyPanel
+                      title="No ballot available yet"
+                      body="Create and select an election before opening voting."
+                    />
+                  ) : !ballotState ? (
+                    <EmptyPanel
+                      title="Loading ballot"
+                      body="The ballot is still loading for this election."
+                    />
+                  ) : ballotState.offices.length === 0 ? (
+                    <EmptyPanel
+                      title="No ballot yet"
+                      body="Add offices and candidates before asking members to vote."
+                    />
+                  ) : (
+                    <form className="space-y-6" onSubmit={handleSubmitBallot}>
+                      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+                        <div className="space-y-6">
+                          <SectionCard
+                            title={ballotState.election.title}
+                            description={ballotState.election.description ?? "No description yet."}
+                            action={<StatusPill status={ballotState.election.status} />}
+                          >
+                            <div className="grid gap-3 md:grid-cols-3">
+                              <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/55 p-4">
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">Starts</p>
+                                <p className="mt-2 font-semibold">{formatDateTime(ballotState.election.startsAt)}</p>
+                              </div>
+                              <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/55 p-4">
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">Ends</p>
+                                <p className="mt-2 font-semibold">{formatDateTime(ballotState.election.endsAt)}</p>
+                              </div>
+                              <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/55 p-4">
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">Progress</p>
+                                <p className="mt-2 font-semibold">{ballotCompletionPercent}% complete</p>
+                              </div>
+                            </div>
+                            <Progress value={ballotCompletionPercent} />
+                          </SectionCard>
+
+                          {ballotState.offices.map((office, index) => (
+                            <SectionCard
+                              key={office.id}
+                              title={office.title}
+                              description={office.description ?? "No description yet."}
+                              action={<Badge variant="outline">{office.seats} seat{office.seats === 1 ? "" : "s"}</Badge>}
+                            >
+                              <div className="mb-1">
+                                <SharedWorkflowStep
+                                  isActive={!ballotSelections[office.id]}
+                                  isComplete={Boolean(ballotSelections[office.id])}
+                                  label={`Step ${index + 1}`}
+                                  meta={ballotSelections[office.id] ? "Selected" : "Choose one candidate"}
+                                />
+                              </div>
+                              <RadioGroup
+                                value={ballotSelections[office.id]}
+                                onValueChange={(value) =>
+                                  setBallotSelections((current) => ({
+                                    ...current,
+                                    [office.id]: value
+                                  }))
+                                }
+                                className="grid gap-3"
+                              >
+                                {office.candidates.map((candidate) => {
+                                  const isSelected = ballotSelections[office.id] === candidate.id;
 
                                   return (
-                                    <div className="result-row" key={candidate.candidateId}>
-                                      <div className="result-row__copy">
-                                        <strong>{candidate.displayName}</strong>
-                                        <span>{candidate.votes} votes</span>
+                                    <label
+                                      key={candidate.id}
+                                      className={`flex cursor-pointer items-start gap-4 rounded-[calc(var(--radius)-0.25rem)] border p-4 transition ${
+                                        isSelected
+                                          ? "border-[color:var(--primary)]/35 bg-[color:var(--secondary)]/60"
+                                          : "border-[color:var(--border)] bg-white hover:bg-[color:var(--muted)]/50"
+                                      }`}
+                                    >
+                                      <RadioGroupItem
+                                        value={candidate.id}
+                                        disabled={Boolean(ballotState.ballot) || !ballotIsOpen}
+                                        className="mt-1"
+                                      />
+                                      <div className="space-y-2">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <p className="font-semibold">{candidate.displayName}</p>
+                                          {isSelected ? <Badge variant="outline">Selected</Badge> : null}
+                                        </div>
+                                        <p className="text-sm text-[color:var(--muted-foreground)]">
+                                          {candidate.bio ?? "No bio yet."}
+                                        </p>
                                       </div>
-                                      <div className="result-bar">
-                                        <div
-                                          className="result-bar__fill"
-                                          style={{ width: `${Math.max(percentage, office.totalVotes ? 8 : 0)}%` }}
-                                        />
-                                      </div>
-                                      <span className="result-percentage">{percentage}%</span>
-                                    </div>
+                                    </label>
                                   );
                                 })}
-                            </div>
-                          </article>
+                              </RadioGroup>
+                            </SectionCard>
+                          ))}
+                        </div>
+
+                        <ReviewPanel
+                          title="Review ballot"
+                          subtitle={
+                            ballotState.ballot
+                              ? "This account has already submitted a ballot for this election."
+                              : ballotIsOpen
+                                ? "Check your choices before you submit."
+                                : "Voting is disabled until this election is OPEN."
+                          }
+                          progress={ballotCompletionPercent}
+                          stats={[
+                            { label: "Completed", value: `${selectedBallotCount}/${totalBallotOffices}` },
+                            { label: "Election state", value: toTitleCase(ballotState.election.status) }
+                          ]}
+                          items={ballotReviewItems.map((item) => ({
+                            label: item.officeTitle,
+                            value: item.candidateName ?? "Pending selection"
+                          }))}
+                          actions={
+                            <Button
+                              className="w-full"
+                              disabled={
+                                activeAction === "submit-ballot" ||
+                                Boolean(ballotState.ballot) ||
+                                !ballotIsOpen
+                              }
+                              type="submit"
+                            >
+                              {ballotState.ballot
+                                ? "Ballot already submitted"
+                                : activeAction === "submit-ballot"
+                                  ? "Submitting ballot..."
+                                  : "Submit ballot"}
+                            </Button>
+                          }
+                          notes={
+                            ballotState.ballot
+                              ? "This ballot has already been recorded."
+                              : "You can only submit one ballot for this election."
+                          }
+                        />
+                      </div>
+                    </form>
+                  )}
+                  </TabsContent>
+
+                  <TabsContent value="results">
+                  {!hasElectionWorkspace ? (
+                    <EmptyPanel
+                      title="No results to display"
+                      body="Choose an election to view results."
+                    />
+                  ) : resultsError ? (
+                    <Alert>
+                      <AlertTitle>Results are unavailable</AlertTitle>
+                      <AlertDescription>{resultsError}</AlertDescription>
+                    </Alert>
+                  ) : !results || results.offices.length === 0 ? (
+                    <EmptyPanel title="No results yet" body="No votes have been counted for this election." />
+                  ) : (
+                    <SectionCard title="Results" description="Vote totals for this election.">
+                      <div className="grid gap-4">
+                        {results.offices.map((office) => (
+                          <Card key={office.officeId} className="border-white/70 bg-white/95">
+                            <CardContent className="space-y-5 p-5">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <h3 className="font-[family:var(--font-heading)] text-2xl">{office.title}</h3>
+                                  <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                                    {office.totalVotes} total votes counted
+                                  </p>
+                                </div>
+                                <Badge variant="outline">
+                                  {office.seats} seat{office.seats > 1 ? "s" : ""}
+                                </Badge>
+                              </div>
+
+                              <div className="space-y-4">
+                                {[...office.candidates]
+                                  .sort((left, right) => right.votes - left.votes)
+                                  .map((candidate) => {
+                                    const percentage =
+                                      office.totalVotes === 0
+                                        ? 0
+                                        : Math.round((candidate.votes / office.totalVotes) * 100);
+
+                                    return (
+                                      <div key={candidate.candidateId} className="space-y-2">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <div>
+                                            <p className="font-semibold">{candidate.displayName}</p>
+                                            <p className="text-sm text-[color:var(--muted-foreground)]">
+                                              {candidate.votes} votes
+                                            </p>
+                                          </div>
+                                          <Badge variant="outline">{percentage}%</Badge>
+                                        </div>
+                                        <Progress value={percentage || (office.totalVotes ? 8 : 0)} />
+                                      </div>
+                                    );
+                                  })}
+                              </div>
+                            </CardContent>
+                          </Card>
                         ))}
                       </div>
-                    )}
-                  </section>
-                ) : (
-                  <EmptyPanel
-                    title="No results to display"
-                    body="Select an election in Setup to review vote counts and candidate standings."
-                  />
-                )
-              ) : null}
+                    </SectionCard>
+                  )}
+                  </TabsContent>
+
+                  <TabsContent value="audit">
+                  {!selectedOrganization ? (
+                    <EmptyPanel
+                      title="No organization selected"
+                      body="Choose an organization to view its audit log."
+                    />
+                  ) : !canManageSelectedOrganization ? (
+                    <EmptyPanel
+                      title="Audit access is restricted"
+                      body="Only organization managers can view the audit log."
+                    />
+                  ) : (
+                    <SectionCard
+                      title="Audit log"
+                      description="Recent actions across the organization. Ballot choices are never stored here."
+                      action={isLoadingAuditLogs ? <Badge variant="outline">Refreshing...</Badge> : undefined}
+                    >
+                      {auditLogs.length === 0 ? (
+                        <SharedEmptyState title="No recent activity yet" body="Activity will appear here as people use the app." />
+                      ) : (
+                        <div className="grid gap-4">
+                          {auditLogs.map((log) => (
+                            <Card key={log.id} className="border-white/70 bg-white/95">
+                              <CardContent className="space-y-4 p-5">
+                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                  <div className="space-y-1">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--primary)]">
+                                      #{log.targetType}
+                                    </p>
+                                    <h3 className="font-[family:var(--font-heading)] text-2xl">
+                                      {formatAuditAction(log.action)}
+                                    </h3>
+                                  </div>
+                                  <Badge variant="outline">{formatDateTime(log.createdAt)}</Badge>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                  <Badge variant="outline">
+                                    Actor: {log.actor.firstName} {log.actor.lastName}
+                                  </Badge>
+                                  <Badge variant="outline">{log.actor.email}</Badge>
+                                  <Badge variant="outline">Role: {toTitleCase(log.actor.role)}</Badge>
+                                  {log.ipAddress ? <Badge variant="outline">IP: {log.ipAddress}</Badge> : null}
+                                </div>
+
+                                <p className="text-sm text-[color:var(--muted-foreground)]">
+                                  {formatAuditMetadata(log.metadata)}
+                                </p>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+                      )}
+                    </SectionCard>
+                  )}
+                  </TabsContent>
+                </Tabs>
+              </div>
             </>
           )}
         </div>
-      </section>
-    </section>
+      </div>
+    </PageShell>
   );
 }

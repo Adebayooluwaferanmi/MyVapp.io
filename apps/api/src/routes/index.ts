@@ -1,6 +1,8 @@
 import { Router } from "express";
 
 import { authRouter } from "../modules/auth/auth.routes";
+import { ballotsPublicRouter } from "../modules/ballots/ballots.public.routes";
+import { eligibilityPublicRouter } from "../modules/eligibility/eligibility.public.routes";
 import { organizationsRouter } from "../modules/organizations/organizations.routes";
 import { healthRouter } from "../modules/health/health.routes";
 
@@ -16,6 +18,8 @@ apiRouter.get("/", (_request, response) => {
 
 apiRouter.use("/health", healthRouter);
 apiRouter.use("/auth", authRouter);
+apiRouter.use("/public/elections", eligibilityPublicRouter);
+apiRouter.use("/public/elections", ballotsPublicRouter);
 apiRouter.use("/organizations", organizationsRouter);
 
 export { apiRouter };

@@ -111,6 +111,9 @@ jobs:
       - name: Push schema to Postgres
         run: ./node_modules/.bin/prisma db push --schema apps/api/prisma/schema.prisma
 
+      - name: Run DB integration tests
+        run: npm --workspace @myvapp/api run test:integration
+
       - name: Seed demo data
         run: npm --workspace @myvapp/api run db:seed
         env:
