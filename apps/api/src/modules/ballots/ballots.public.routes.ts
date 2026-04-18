@@ -7,4 +7,3 @@ const ballotsPublicRouter = Router();
 ballotsPublicRouter.get("/:electionSlug/results", getPublicResults);
 
 export { ballotsPublicRouter };
-

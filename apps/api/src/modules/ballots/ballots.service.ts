@@ -296,7 +296,7 @@ export async function getElectionResultsForViewer(input: {
     by: ["officeId", "candidateId"],
     where: {
       ballot: {
-        electionId
+        electionId: input.electionId
       }
     },
     _count: {

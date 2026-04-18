@@ -11,7 +11,7 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "test": "TMPDIR=/tmp vitest run",
-    "test:integration": "npm run db:push && TMPDIR=/tmp RUN_DB_TESTS=1 vitest run src/integration/manager-voter-flow.test.ts",
+    "test:integration": "npm run db:push && TMPDIR=/tmp RUN_DB_TESTS=1 vitest run src/integration/election-claim-flow.test.ts",
     "test:watch": "TMPDIR=/tmp vitest",
     "smoke": "node scripts/smoke.cjs"
   },

@@ -1,5 +1,7 @@
 import "dotenv/config";
 
+process.env.NODE_ENV = process.env.NODE_ENV || "test";
+
 import { PrismaClient } from "@prisma/client";
 import request from "supertest";
 
@@ -30,6 +32,7 @@ type ElectionResponse = {
     id: string;
     title: string;
     status: string;
+    publicSlug: string;
   };
 };
 
@@ -68,6 +71,12 @@ type ResultsResponse = {
   }>;
 };
 
+type InviteSendResponse = {
+  sent: Array<{
+    claimToken?: string;
+  }>;
+};
+
 const prisma = new PrismaClient();
 
 function logStep(message: string): void {
@@ -89,30 +98,30 @@ async function main() {
   await prisma.$connect();
 
   const suffix = Date.now();
-  const email = `smoke-admin-${suffix}@myvapp.local`;
-  const password = "SmokePass1";
+  const managerEmail = `smoke-admin-${suffix}@myvapp.local`;
+  const managerPassword = "SmokePass1";
+  const voterEmail = `smoke-voter-${suffix}@myvapp.local`;
+  const voterMemberId = `MEM-${suffix}`;
   const organizationName = `Smoke Organization ${suffix}`;
   const electionTitle = `Executive Election ${suffix}`;
 
   logStep("Registering a smoke admin user");
-  const registerResponse = await request(app)
-    .post("/api/v1/auth/register")
-    .send({
-      firstName: "Smoke",
-      lastName: "Admin",
-      email,
-      password
-    });
+  const registerResponse = await request(app).post("/api/v1/auth/register").send({
+    firstName: "Smoke",
+    lastName: "Admin",
+    email: managerEmail,
+    password: managerPassword
+  });
 
   assertStatus(registerResponse, 201, "Register");
 
   const registerBody = registerResponse.body as RegisterResponse;
-  const token = registerBody.token;
+  const managerToken = registerBody.token;
 
   logStep("Creating an organization");
   const organizationResponse = await request(app)
     .post("/api/v1/organizations")
-    .set("Authorization", `Bearer ${token}`)
+    .set("Authorization", `Bearer ${managerToken}`)
     .send({
       name: organizationName,
       description: "Smoke-test organization"
@@ -126,21 +135,24 @@ async function main() {
   logStep("Creating an election");
   const electionResponse = await request(app)
     .post(`/api/v1/organizations/${organizationId}/elections`)
-    .set("Authorization", `Bearer ${token}`)
+    .set("Authorization", `Bearer ${managerToken}`)
     .send({
       title: electionTitle,
-      description: "Smoke-test election"
+      description: "Smoke-test election",
+      startsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      endsAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
     });
 
   assertStatus(electionResponse, 201, "Create election");
 
   const electionBody = electionResponse.body as ElectionResponse;
   const electionId = electionBody.election.id;
+  const electionPublicSlug = electionBody.election.publicSlug;
 
   logStep("Creating an office");
   const officeResponse = await request(app)
     .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/offices`)
-    .set("Authorization", `Bearer ${token}`)
+    .set("Authorization", `Bearer ${managerToken}`)
     .send({
       title: "President",
       seats: 1,
@@ -155,7 +167,7 @@ async function main() {
   logStep("Creating two candidates");
   const firstCandidateResponse = await request(app)
     .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/offices/${officeId}/candidates`)
-    .set("Authorization", `Bearer ${token}`)
+    .set("Authorization", `Bearer ${managerToken}`)
     .send({
       displayName: "Ada Okafor",
       bio: "Candidate one"
@@ -165,7 +177,7 @@ async function main() {
 
   const secondCandidateResponse = await request(app)
     .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/offices/${officeId}/candidates`)
-    .set("Authorization", `Bearer ${token}`)
+    .set("Authorization", `Bearer ${managerToken}`)
     .send({
       displayName: "Tunde Bello",
       bio: "Candidate two"
@@ -176,27 +188,78 @@ async function main() {
   const firstCandidateBody = firstCandidateResponse.body as CandidateResponse;
   const secondCandidateBody = secondCandidateResponse.body as CandidateResponse;
 
+  logStep("Previewing voter registry import");
+  const previewResponse = await request(app)
+    .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/eligibility-imports/preview`)
+    .set("Authorization", `Bearer ${managerToken}`)
+    .send({
+      filename: "smoke-voter-registry.csv",
+      format: "CSV",
+      contentBase64: Buffer.from(
+        `member_unique_id,full_name,age,email\n${voterMemberId},Smoke Voter,31,${voterEmail}\n`
+      ).toString("base64")
+    });
+
+  assertStatus(previewResponse, 201, "Preview voter registry import");
+  const importId = previewResponse.body.importId as string;
+
+  logStep("Committing voter registry import");
+  const commitResponse = await request(app)
+    .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/eligibility-imports/${importId}/commit`)
+    .set("Authorization", `Bearer ${managerToken}`)
+    .send({
+      note: "Smoke test import"
+    });
+
+  assertStatus(commitResponse, 200, "Commit voter registry import");
+
+  logStep("Sending voter invite");
+  const inviteResponse = await request(app)
+    .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/invitations/send`)
+    .set("Authorization", `Bearer ${managerToken}`)
+    .send({});
+
+  assertStatus(inviteResponse, 202, "Send voter invite");
+
+  const inviteBody = inviteResponse.body as InviteSendResponse;
+  const claimToken = inviteBody.sent[0]?.claimToken;
+
+  if (!claimToken) {
+    throw new Error("Expected a test-only claim token in the invite response.");
+  }
+
+  logStep("Claiming voter access");
+  const claimResponse = await request(app)
+    .post(`/api/v1/public/elections/${electionPublicSlug}/claim`)
+    .send({
+      token: claimToken,
+      memberUniqueId: voterMemberId
+    });
+
+  assertStatus(claimResponse, 200, "Claim voter invite");
+  const voterToken = claimResponse.body.token as string;
+
   logStep("Opening the election");
   const openElectionResponse = await request(app)
     .patch(`/api/v1/organizations/${organizationId}/elections/${electionId}/status`)
-    .set("Authorization", `Bearer ${token}`)
+    .set("Authorization", `Bearer ${managerToken}`)
     .send({
       status: "OPEN"
     });
 
   assertStatus(openElectionResponse, 200, "Open election");
 
-  logStep("Fetching the ballot");
+  logStep("Fetching the ballot as the claimed voter");
   const ballotFetchResponse = await request(app)
     .get(`/api/v1/organizations/${organizationId}/elections/${electionId}/ballot`)
-    .set("Authorization", `Bearer ${token}`);
+    .set("Authorization", `Bearer ${voterToken}`);
 
   assertStatus(ballotFetchResponse, 200, "Fetch ballot");
 
   logStep("Submitting the ballot");
   const ballotSubmitResponse = await request(app)
     .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/ballot`)
-    .set("Authorization", `Bearer ${token}`)
+    .set("Authorization", `Bearer ${voterToken}`)
     .send({
       selections: [
         {
@@ -214,12 +277,29 @@ async function main() {
     throw new Error("Expected exactly one vote in the submitted ballot.");
   }
 
-  logStep("Fetching manager results");
+  logStep("Checking that manager tallies stay hidden while voting is open");
+  const openResultsResponse = await request(app)
+    .get(`/api/v1/organizations/${organizationId}/elections/${electionId}/results`)
+    .set("Authorization", `Bearer ${managerToken}`);
+
+  assertStatus(openResultsResponse, 403, "Block open-election manager results");
+
+  logStep("Closing the election");
+  const closeElectionResponse = await request(app)
+    .patch(`/api/v1/organizations/${organizationId}/elections/${electionId}/status`)
+    .set("Authorization", `Bearer ${managerToken}`)
+    .send({
+      status: "CLOSED"
+    });
+
+  assertStatus(closeElectionResponse, 200, "Close election");
+
+  logStep("Fetching manager results after close");
   const resultsResponse = await request(app)
     .get(`/api/v1/organizations/${organizationId}/elections/${electionId}/results`)
-    .set("Authorization", `Bearer ${token}`);
+    .set("Authorization", `Bearer ${managerToken}`);
 
-  assertStatus(resultsResponse, 200, "Fetch results");
+  assertStatus(resultsResponse, 200, "Fetch closed-election results");
 
   const resultsBody = resultsResponse.body as ResultsResponse;
   const officeResults = resultsBody.offices.find((office) => office.officeId === officeId);
@@ -244,11 +324,19 @@ async function main() {
     throw new Error("Expected the unselected candidate to receive zero votes.");
   }
 
+  logStep("Fetching public results after close");
+  const publicResultsResponse = await request(app).get(
+    `/api/v1/public/elections/${electionPublicSlug}/results`
+  );
+
+  assertStatus(publicResultsResponse, 200, "Fetch public results");
+
   logStep("Smoke flow completed successfully");
   console.log(
     JSON.stringify(
       {
-        email,
+        managerEmail,
+        voterEmail,
         organizationId,
         electionId,
         officeId,

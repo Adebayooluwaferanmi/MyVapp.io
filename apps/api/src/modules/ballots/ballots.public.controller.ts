@@ -9,4 +9,3 @@ export async function getPublicResults(request: Request, response: Response): Pr
 
   response.status(200).json(results);
 }
-

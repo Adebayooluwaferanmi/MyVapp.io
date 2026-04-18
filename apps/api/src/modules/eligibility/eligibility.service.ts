@@ -522,7 +522,12 @@ async function createAndSendInvite(input: {
   return {
     eligibilityId: input.eligibility.id,
     email: input.eligibility.email,
-    expiresAt: expiresAt.toISOString()
+    expiresAt: expiresAt.toISOString(),
+    ...(env.NODE_ENV === "test"
+      ? {
+          claimToken: token
+        }
+      : {})
   };
 }
 
