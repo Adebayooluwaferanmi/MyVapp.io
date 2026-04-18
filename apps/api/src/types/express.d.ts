@@ -12,6 +12,10 @@ declare global {
         organizationId: string;
         role: string;
       };
+      organizationAccess?: {
+        organizationId: string;
+        exists: boolean;
+      };
     }
   }
 }

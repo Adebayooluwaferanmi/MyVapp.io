@@ -20,7 +20,7 @@ import type { AuthResponse, PublicElectionClaimContext } from "@/types";
 type PublicClaimPageProps = {
   electionSlug: string;
   healthMessage: string;
-  onAuthenticated: (payload: AuthResponse) => void;
+  onAuthenticated: (payload: AuthResponse, preferredView?: "workspace" | "voter") => void;
 };
 
 type Notice = {
@@ -108,7 +108,7 @@ export function PublicClaimPage({
         tone: "success",
         text: response.message || "Access confirmed."
       });
-      onAuthenticated(response);
+      onAuthenticated(response, "voter");
     } catch (error) {
       setNotice({
         tone: "error",
@@ -123,8 +123,8 @@ export function PublicClaimPage({
     <PageShell>
       <PageHeader
         eyebrow="Election invite"
-        title="Confirm your election access."
-        description="Open the invite, confirm your member ID, and continue into the voting flow."
+        title="Confirm your election access"
+        description="Check the invite details, confirm your member ID, and continue into the election when access is active."
         actions={
           <Button onClick={() => window.location.assign("/")} type="button" variant="outline">
             Back to home
@@ -156,47 +156,89 @@ export function PublicClaimPage({
           body="This election invite could not be loaded. Check the link in your email and try again."
         />
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]">
           <SectionCard
             title={claimContext.election.title}
-            description={`Organization: ${claimContext.election.organizationName}`}
+            description={`${claimContext.election.organizationName} · ${claimContext.invite.email}`}
+            className="overflow-hidden"
           >
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">{claimContext.election.status}</Badge>
-              <Badge variant="outline">Starts {formatDateTime(claimContext.election.startsAt)}</Badge>
-              <Badge variant="outline">Ends {formatDateTime(claimContext.election.endsAt)}</Badge>
-              <Badge variant="outline">Invite expires {formatDateTime(claimContext.invite.expiresAt)}</Badge>
-            </div>
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
+              <div className="space-y-5">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline">{claimContext.election.status}</Badge>
+                  <Badge variant="outline">Starts {formatDateTime(claimContext.election.startsAt)}</Badge>
+                  <Badge variant="outline">Ends {formatDateTime(claimContext.election.endsAt)}</Badge>
+                  <Badge variant="outline">
+                    Invite expires {formatDateTime(claimContext.invite.expiresAt)}
+                  </Badge>
+                </div>
 
-            <form className="space-y-4" onSubmit={handleClaim}>
-              <div className="space-y-2">
-                <label className="text-sm font-medium" htmlFor="member-unique-id">
-                  Member unique ID
-                </label>
-                <Input
-                  id="member-unique-id"
-                  required
-                  value={memberUniqueId}
-                  onChange={(event) => setMemberUniqueId(event.target.value)}
-                  placeholder="Enter the member ID from your voter register"
-                />
+                <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--secondary)_72%,white),white)] p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--muted-foreground)]">
+                    Invite status
+                  </p>
+                  <p className="mt-3 font-[family:var(--font-heading)] text-3xl">
+                    {claimContext.invite.canClaim ? "Ready to confirm" : claimContext.invite.status}
+                  </p>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-[color:var(--muted-foreground)]">
+                    {claimContext.invite.message}
+                  </p>
+                </div>
+
+                <form className="space-y-4" onSubmit={handleClaim}>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="member-unique-id">
+                      Member unique ID
+                    </label>
+                    <Input
+                      id="member-unique-id"
+                      required
+                      value={memberUniqueId}
+                      onChange={(event) => setMemberUniqueId(event.target.value)}
+                      placeholder="Enter the member ID from the voter registry"
+                    />
+                  </div>
+
+                  <Button
+                    className="w-full sm:w-auto"
+                    disabled={isSubmitting || !claimContext.invite.canClaim}
+                    type="submit"
+                  >
+                    {isSubmitting ? "Confirming..." : "Confirm access"}
+                  </Button>
+                </form>
               </div>
 
-              <Button className="w-full sm:w-auto" disabled={isSubmitting} type="submit">
-                {isSubmitting ? "Confirming..." : "Confirm access"}
-              </Button>
-            </form>
+              <div className="space-y-4 rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-white p-5">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--muted-foreground)]">
+                    What happens next
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-[color:var(--muted-foreground)]">
+                    Once the member ID matches, the app signs you in and takes you into the election
+                    flow for this event only.
+                  </p>
+                </div>
+                <div className="space-y-3 text-sm text-[color:var(--muted-foreground)]">
+                  <p>The invite must still be active and unused.</p>
+                  <p>The member unique ID must match the voter registry for this election.</p>
+                  <p>Ballot access opens only during the election window.</p>
+                </div>
+              </div>
+            </div>
           </SectionCard>
 
           <SectionCard
-            title="Before you continue"
-            description="What this page checks before access is granted."
+            title="Need a different path?"
+            description="Managers and voters use different starting points in MyVapp."
           >
             <div className="space-y-3 text-sm text-[color:var(--muted-foreground)]">
-              <p>Your invite must still be active and not already used.</p>
-              <p>Your member unique ID must match the election voter registry.</p>
-              <p>After confirmation, the app signs you in and takes you into the election flow.</p>
+              <p>Managers should sign in from the homepage to create elections, import registries, and send invites.</p>
+              <p>Voters should use the invite link from email or sign in if they have already claimed access.</p>
             </div>
+            <Button onClick={() => window.location.assign("/#access")} type="button" variant="secondary">
+              Go to homepage access options
+            </Button>
           </SectionCard>
         </div>
       )}

@@ -15,6 +15,7 @@ export type CurrentUser = {
 export type StoredSession = {
   token: string;
   user: CurrentUser;
+  preferredView?: "workspace" | "voter";
 };
 
 export type AuthResponse = {
@@ -246,6 +247,10 @@ export type PublicElectionClaimContext = {
     expiresAt: string;
     claimed: boolean;
     revoked: boolean;
+    status: "ACTIVE" | "CLAIMED" | "VOTED" | "REVOKED" | "EXPIRED" | "CLOSED" | "UNAVAILABLE";
+    canClaim: boolean;
+    message: string;
+    email: string;
   };
 };
 

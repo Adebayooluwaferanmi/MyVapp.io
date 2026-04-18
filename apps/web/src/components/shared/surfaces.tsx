@@ -29,7 +29,7 @@ function titleize(value: string) {
 }
 
 export function PageShell({ children, className }: { children: ReactNode; className?: string }) {
-  return <section className={cn("space-y-6", className)}>{children}</section>;
+  return <section className={cn("space-y-8 xl:space-y-10", className)}>{children}</section>;
 }
 
 export function PageHeader({
@@ -46,19 +46,23 @@ export function PageHeader({
   meta?: ReactNode;
 }) {
   return (
-    <Card className="overflow-hidden border-white/70 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--card)_90%,white),color-mix(in_srgb,var(--secondary)_55%,white))]">
-      <CardContent className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-        <div className="space-y-4">
+    <Card className="overflow-hidden border-white/70 bg-[linear-gradient(125deg,color-mix(in_srgb,var(--card)_94%,white),color-mix(in_srgb,var(--secondary)_48%,white))] shadow-[0_28px_80px_-42px_rgba(15,23,42,0.45)]">
+      <CardContent className="grid gap-8 p-7 md:p-8 xl:grid-cols-[minmax(0,1.15fr)_minmax(18rem,0.85fr)] xl:items-start">
+        <div className="space-y-5">
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[color:var(--primary)]">{eyebrow}</p>
-            <h1 className="font-[family:var(--font-heading)] text-4xl leading-tight text-[color:var(--foreground)] md:text-5xl">
+            <h1 className="max-w-4xl font-[family:var(--font-heading)] text-4xl leading-tight text-[color:var(--foreground)] md:text-5xl xl:text-6xl">
               {title}
             </h1>
-            <p className="max-w-3xl text-base text-[color:var(--muted-foreground)]">{description}</p>
+            <p className="max-w-3xl text-base leading-7 text-[color:var(--muted-foreground)] md:text-lg">
+              {description}
+            </p>
           </div>
           {meta ? <div className="flex flex-wrap gap-2">{meta}</div> : null}
         </div>
-        {actions ? <div className="flex flex-wrap gap-3">{actions}</div> : null}
+        {actions ? (
+          <div className="flex flex-wrap items-start justify-start gap-3 xl:justify-end">{actions}</div>
+        ) : null}
       </CardContent>
     </Card>
   );

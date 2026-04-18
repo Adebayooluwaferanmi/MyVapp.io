@@ -1,3 +1,5 @@
+import { ElectionEligibilityStatus, MembershipRole, UserRole } from "@prisma/client";
+
 import { AppError } from "../../lib/app-error";
 import { prisma } from "../../lib/prisma";
 import type { AuditRequestContext } from "../../lib/request-audit";
@@ -9,6 +11,8 @@ import type {
   CreateOfficeInput,
   UpdateElectionStatusInput
 } from "./elections.schemas";
+
+const managerRoles = new Set<MembershipRole>([MembershipRole.OWNER, MembershipRole.ADMIN]);
 
 async function buildUniqueElectionSlug(organizationId: string, title: string): Promise<string> {
   const base = slugify(title) || "election";
@@ -87,6 +91,51 @@ async function ensureOfficeInElection(organizationId: string, electionId: string
 export async function listOrganizationElections(organizationId: string) {
   return prisma.election.findMany({
     where: { organizationId },
+    orderBy: [
+      {
+        createdAt: "desc"
+      }
+    ],
+    include: {
+      _count: {
+        select: {
+          offices: true,
+          ballots: true
+        }
+      }
+    }
+  });
+}
+
+function canManageOrganization(platformRole: string | undefined, membershipRole: string | undefined) {
+  return (
+    platformRole === UserRole.SUPER_ADMIN ||
+    managerRoles.has((membershipRole as MembershipRole | undefined) ?? MembershipRole.MEMBER)
+  );
+}
+
+export async function listOrganizationElectionsForUser(input: {
+  organizationId: string;
+  userId: string;
+  platformRole?: string;
+  membershipRole?: string;
+}) {
+  if (canManageOrganization(input.platformRole, input.membershipRole)) {
+    return listOrganizationElections(input.organizationId);
+  }
+
+  return prisma.election.findMany({
+    where: {
+      organizationId: input.organizationId,
+      eligibilities: {
+        some: {
+          claimedByUserId: input.userId,
+          status: {
+            in: [ElectionEligibilityStatus.CLAIMED, ElectionEligibilityStatus.VOTED]
+          }
+        }
+      }
+    },
     orderBy: [
       {
         createdAt: "desc"
@@ -182,6 +231,63 @@ export async function getElectionDetails(organizationId: string, electionId: str
 
   if (!election) {
     throw new AppError("Election not found in this organization.", 404);
+  }
+
+  return election;
+}
+
+export async function getElectionDetailsForUser(input: {
+  organizationId: string;
+  electionId: string;
+  userId: string;
+  platformRole?: string;
+  membershipRole?: string;
+}) {
+  if (canManageOrganization(input.platformRole, input.membershipRole)) {
+    return getElectionDetails(input.organizationId, input.electionId);
+  }
+
+  const election = await prisma.election.findFirst({
+    where: {
+      id: input.electionId,
+      organizationId: input.organizationId,
+      eligibilities: {
+        some: {
+          claimedByUserId: input.userId,
+          status: {
+            in: [ElectionEligibilityStatus.CLAIMED, ElectionEligibilityStatus.VOTED]
+          }
+        }
+      }
+    },
+    include: {
+      offices: {
+        orderBy: [
+          {
+            sortOrder: "asc"
+          },
+          {
+            createdAt: "asc"
+          }
+        ],
+        include: {
+          candidates: {
+            orderBy: {
+              createdAt: "asc"
+            }
+          }
+        }
+      },
+      _count: {
+        select: {
+          ballots: true
+        }
+      }
+    }
+  });
+
+  if (!election) {
+    throw new AppError("You do not have access to this election.", 403);
   }
 
   return election;

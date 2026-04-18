@@ -1,10 +1,16 @@
-import { ElectionStatus } from "@prisma/client";
+import { ElectionEligibilityStatus, MembershipRole, UserRole } from "@prisma/client";
 
 import { AppError } from "../../lib/app-error";
 import { prisma } from "../../lib/prisma";
 import type { AuditRequestContext } from "../../lib/request-audit";
 import { recordAuditLog } from "../audit/audit.service";
+import {
+  canUseElectionEligibilityForBallot,
+  canViewElectionResults
+} from "../eligibility/eligibility.policy";
 import type { SubmitBallotInput } from "./ballots.schemas";
+
+const managerRoles = new Set<MembershipRole>([MembershipRole.OWNER, MembershipRole.ADMIN]);
 
 async function getElectionOrThrow(organizationId: string, electionId: string) {
   const election = await prisma.election.findFirst({
@@ -40,12 +46,81 @@ async function getElectionOrThrow(organizationId: string, electionId: string) {
   return election;
 }
 
+async function getElectionByPublicSlugOrThrow(electionSlug: string) {
+  const election = await prisma.election.findUnique({
+    where: {
+      publicSlug: electionSlug
+    },
+    include: {
+      offices: {
+        orderBy: [
+          {
+            sortOrder: "asc"
+          },
+          {
+            createdAt: "asc"
+          }
+        ],
+        include: {
+          candidates: {
+            orderBy: {
+              createdAt: "asc"
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!election) {
+    throw new AppError("Election not found.", 404);
+  }
+
+  return election;
+}
+
+async function getElectionEligibilityForUserOrThrow(
+  organizationId: string,
+  electionId: string,
+  userId: string
+) {
+  const eligibility = await prisma.electionEligibility.findFirst({
+    where: {
+      electionId,
+      claimedByUserId: userId,
+      election: {
+        organizationId
+      }
+    },
+    select: {
+      id: true,
+      status: true,
+      votedAt: true,
+      electionId: true
+    }
+  });
+
+  if (!eligibility) {
+    throw new AppError("You do not have election access for this ballot.", 403);
+  }
+
+  if (
+    eligibility.status === ElectionEligibilityStatus.REVOKED ||
+    eligibility.status === ElectionEligibilityStatus.EXPIRED
+  ) {
+    throw new AppError("Your election access is no longer active.", 403);
+  }
+
+  return eligibility;
+}
+
 export async function getBallotForElection(
   organizationId: string,
   electionId: string,
   voterId: string
 ) {
   const election = await getElectionOrThrow(organizationId, electionId);
+  await getElectionEligibilityForUserOrThrow(organizationId, electionId, voterId);
   const existingBallot = await prisma.ballot.findUnique({
     where: {
       electionId_voterId: {
@@ -80,9 +155,16 @@ export async function submitBallot(
   auditContext?: AuditRequestContext
 ) {
   const election = await getElectionOrThrow(organizationId, electionId);
+  const eligibility = await getElectionEligibilityForUserOrThrow(organizationId, electionId, voterId);
 
-  if (election.status !== ElectionStatus.OPEN) {
-    throw new AppError("Voting is only allowed when the election is open.", 409);
+  if (
+    !canUseElectionEligibilityForBallot({
+      eligibilityStatus: eligibility.status,
+      electionStatus: election.status,
+      electionEndsAt: election.endsAt
+    })
+  ) {
+    throw new AppError("Voting is only available for claimed voter access while the election is open.", 403);
   }
 
   const existingBallot = await prisma.ballot.findUnique({
@@ -146,6 +228,14 @@ export async function submitBallot(
       }
     });
 
+    await transaction.electionEligibility.update({
+      where: { id: eligibility.id },
+      data: {
+        status: ElectionEligibilityStatus.VOTED,
+        votedAt: ballot.submittedAt
+      }
+    });
+
     await recordAuditLog(
       {
         organizationId,
@@ -167,14 +257,95 @@ export async function submitBallot(
   });
 }
 
-export async function getElectionResults(organizationId: string, electionId: string) {
-  const election = await getElectionOrThrow(organizationId, electionId);
+export async function getElectionResultsForViewer(input: {
+  organizationId: string;
+  electionId: string;
+  userId: string;
+  platformRole?: string;
+  membershipRole?: string;
+}) {
+  const election = await getElectionOrThrow(input.organizationId, input.electionId);
+  const isManager =
+    input.platformRole === UserRole.SUPER_ADMIN ||
+    managerRoles.has((input.membershipRole as MembershipRole | undefined) ?? MembershipRole.MEMBER);
+
+  if (isManager) {
+    if (!canViewElectionResults("manager", election.status)) {
+      throw new AppError(
+        "Candidate tallies are available after the election closes. Use the voter registry summary to track turnout while voting is open.",
+        403
+      );
+    }
+  } else {
+    const eligibility = await getElectionEligibilityForUserOrThrow(
+      input.organizationId,
+      input.electionId,
+      input.userId
+    );
+
+    if (
+      !canViewElectionResults("voter", election.status) ||
+      (eligibility.status !== ElectionEligibilityStatus.CLAIMED &&
+        eligibility.status !== ElectionEligibilityStatus.VOTED)
+    ) {
+      throw new AppError("Election results will be available here after voting closes.", 403);
+    }
+  }
 
   const groupedVotes = await prisma.vote.groupBy({
     by: ["officeId", "candidateId"],
     where: {
       ballot: {
         electionId
+      }
+    },
+    _count: {
+      candidateId: true
+    }
+  });
+
+  const voteCountMap = new Map<string, number>();
+
+  for (const record of groupedVotes) {
+    voteCountMap.set(`${record.officeId}:${record.candidateId}`, record._count.candidateId);
+  }
+
+  const offices = election.offices.map((office) => ({
+    officeId: office.id,
+    title: office.title,
+    seats: office.seats,
+    totalVotes: office.candidates.reduce((sum, candidate) => {
+      return sum + (voteCountMap.get(`${office.id}:${candidate.id}`) ?? 0);
+    }, 0),
+    candidates: office.candidates.map((candidate) => ({
+      candidateId: candidate.id,
+      displayName: candidate.displayName,
+      votes: voteCountMap.get(`${office.id}:${candidate.id}`) ?? 0
+    }))
+  }));
+
+  return {
+    election: {
+      id: election.id,
+      title: election.title,
+      status: election.status
+    },
+    offices
+  };
+}
+
+export async function getPublicElectionResults(electionSlug: string) {
+  const election = await getElectionByPublicSlugOrThrow(electionSlug);
+
+  if (!canViewElectionResults("public", election.status)) {
+    throw new AppError("Election results will be available here after voting closes.", 403);
+  }
+
+  const groupedVotes = await prisma.vote.groupBy({
+    by: ["officeId", "candidateId"],
+    where: {
+      ballot: {
+        electionId: election.id
       }
     },
     _count: {

@@ -17,14 +17,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { getElectionBallot, listElections, listOrganizations, submitBallot } from "@/lib/services";
+import {
+  getElectionBallot,
+  getElectionResults,
+  listElections,
+  listOrganizations,
+  submitBallot
+} from "@/lib/services";
 import type { OrganizationThemeInput } from "@/lib/theme";
-import type { BallotState, ElectionSummary, Organization, StoredSession } from "@/types";
+import type { BallotState, ElectionSummary, Organization, Results, StoredSession } from "@/types";
 
 type VoterPortalProps = {
   healthMessage: string;
   onLogout: () => void;
   onRefreshProfile: () => Promise<void>;
+  onSwitchToWorkspace?: () => void;
   onThemeChange: (theme: OrganizationThemeInput) => void;
   session: StoredSession;
 };
@@ -93,6 +100,7 @@ export function VoterPortal({
   healthMessage,
   onLogout,
   onRefreshProfile,
+  onSwitchToWorkspace,
   onThemeChange,
   session
 }: VoterPortalProps) {
@@ -102,11 +110,13 @@ export function VoterPortal({
   const [selectedElectionId, setSelectedElectionId] = useState<string | null>(null);
   const [ballotState, setBallotState] = useState<BallotState | null>(null);
   const [ballotSelections, setBallotSelections] = useState<Record<string, string>>({});
+  const [results, setResults] = useState<Results | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [isLoadingOrganizations, setIsLoadingOrganizations] = useState(true);
   const [isLoadingElections, setIsLoadingElections] = useState(false);
   const [isLoadingBallot, setIsLoadingBallot] = useState(false);
+  const [isLoadingResults, setIsLoadingResults] = useState(false);
 
   const selectedOrganization = useMemo(
     () => organizations.find((organization) => organization.id === selectedOrganizationId) ?? null,
@@ -125,6 +135,7 @@ export function VoterPortal({
   const completionPercent = totalOffices === 0 ? 0 : Math.round((selectedCount / totalOffices) * 100);
   const hasSubmittedBallot = Boolean(ballotState?.ballot);
   const ballotIsOpen = ballotState?.election.status === "OPEN";
+  const canShowResults = selectedElection?.status === "CLOSED" || selectedElection?.status === "ARCHIVED";
 
   const reviewItems = useMemo(() => {
     if (!ballotState) {
@@ -162,6 +173,7 @@ export function VoterPortal({
   useEffect(() => {
     if (!selectedOrganizationId || !selectedElectionId) {
       setBallotState(null);
+      setResults(null);
       return;
     }
 
@@ -203,6 +215,16 @@ export function VoterPortal({
         : { themePreset: "myvapp-default" }
     );
   }, [onThemeChange, selectedOrganization]);
+
+  useEffect(() => {
+    if (!selectedOrganizationId || !selectedElectionId || !canShowResults) {
+      setResults(null);
+      return;
+    }
+
+    void loadResults(selectedOrganizationId, selectedElectionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canShowResults, selectedElectionId, selectedOrganizationId, session.token]);
 
   async function loadOrganizations(preferredOrganizationId?: string) {
     setIsLoadingOrganizations(true);
@@ -283,6 +305,23 @@ export function VoterPortal({
     }
   }
 
+  async function loadResults(organizationId: string, electionId: string) {
+    setIsLoadingResults(true);
+
+    try {
+      const nextResults = await getElectionResults(session.token, organizationId, electionId);
+      setResults(nextResults);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to load election results."
+      });
+      setResults(null);
+    } finally {
+      setIsLoadingResults(false);
+    }
+  }
+
   async function handleSubmitBallot(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -344,10 +383,15 @@ export function VoterPortal({
     <PageShell>
       <PageHeader
         eyebrow="Voter portal"
-        title="Review your ballot and submit when you're ready."
-        description="Choose an organization, open an election, and pick one candidate for each office."
+        title="Access your claimed elections"
+        description="Open the election you claimed, review the ballot when voting is open, and return here for results after the election closes."
         actions={
           <>
+            {onSwitchToWorkspace ? (
+              <Button variant="outline" onClick={onSwitchToWorkspace} type="button">
+                Manager workspace
+              </Button>
+            ) : null}
             <Button variant="secondary" onClick={() => void onRefreshProfile()} type="button">
               Refresh profile
             </Button>
@@ -468,7 +512,7 @@ export function VoterPortal({
                   >
                     <p className="font-semibold">{organization.name}</p>
                     <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                      {organization.description ?? "No description yet."}
+                      {organization.description ?? "Election access is available through your claimed invites."}
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Badge variant="outline">{organization._count?.elections ?? 0} elections</Badge>
@@ -483,7 +527,7 @@ export function VoterPortal({
           <div id="portal-elections">
             <SectionCard title="Elections" description={isLoadingElections ? "Refreshing elections..." : "Open elections are shown first."}>
               {elections.length === 0 ? (
-                <p className="text-sm text-[color:var(--muted-foreground)]">No elections available for this organization yet.</p>
+                <p className="text-sm text-[color:var(--muted-foreground)]">No claimed elections are available in this organization yet.</p>
               ) : (
                 <div className="space-y-4">
                   {[
@@ -550,6 +594,7 @@ export function VoterPortal({
                     <Badge variant="outline">{selectedElection._count?.offices ?? 0} offices</Badge>
                     <Badge variant="outline">Starts {formatDateTime(selectedElection.startsAt)}</Badge>
                     <Badge variant="outline">Ends {formatDateTime(selectedElection.endsAt)}</Badge>
+                    {canShowResults ? <Badge variant="success">Results available</Badge> : null}
                   </div>
                 </SectionCard>
                 <SectionCard title={`${completionPercent}% complete`} description="Ballot progress">
@@ -559,7 +604,9 @@ export function VoterPortal({
                       ? "Your ballot has been submitted for this election."
                       : ballotIsOpen
                         ? "Choose one candidate in each office. You can only submit once."
-                        : "Voting will open when this election is marked OPEN."}
+                        : canShowResults
+                          ? "Voting has closed. Results are available below."
+                          : "Voting will open when this election is marked OPEN."}
                   </p>
                 </SectionCard>
               </div>
@@ -616,7 +663,7 @@ export function VoterPortal({
                                     <RadioGroupItem
                                       value={candidate.id}
                                       id={`${office.id}-${candidate.id}`}
-                                      disabled={hasSubmittedBallot || !ballotIsOpen}
+                            disabled={hasSubmittedBallot || !ballotIsOpen}
                                       className="mt-1"
                                     />
                                     <div className="space-y-1">
@@ -673,13 +720,63 @@ export function VoterPortal({
                         notes={
                           hasSubmittedBallot
                             ? "Your vote has been recorded."
-                            : "You can only submit once for this election."
+                            : canShowResults
+                              ? "Voting has closed for this election."
+                              : "You can only submit once for this election."
                         }
                       />
                     </div>
                   </form>
                 )}
               </SectionCard>
+
+              {canShowResults ? (
+                <SectionCard
+                  title="Election results"
+                  description="Results appear after the election closes."
+                >
+                  {isLoadingResults ? (
+                    <p className="text-sm text-[color:var(--muted-foreground)]">Loading results...</p>
+                  ) : !results || results.offices.length === 0 ? (
+                    <p className="text-sm text-[color:var(--muted-foreground)]">
+                      No results are available for this election yet.
+                    </p>
+                  ) : (
+                    <div className="grid gap-4 xl:grid-cols-2">
+                      {results.offices.map((office) => (
+                        <Card key={office.officeId} className="border-white/70 bg-white/95">
+                          <CardContent className="space-y-4 p-5">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <h3 className="font-[family:var(--font-heading)] text-2xl">{office.title}</h3>
+                                <p className="text-sm text-[color:var(--muted-foreground)]">
+                                  {office.totalVotes} total vote{office.totalVotes === 1 ? "" : "s"}
+                                </p>
+                              </div>
+                              <Badge variant="outline">
+                                {office.seats} seat{office.seats === 1 ? "" : "s"}
+                              </Badge>
+                            </div>
+                            <div className="space-y-3">
+                              {office.candidates.map((candidate) => (
+                                <div
+                                  key={candidate.candidateId}
+                                  className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/50 p-4"
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <p className="font-semibold">{candidate.displayName}</p>
+                                    <Badge variant="outline">{candidate.votes} vote{candidate.votes === 1 ? "" : "s"}</Badge>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </SectionCard>
+              ) : null}
             </>
           )}
         </div>

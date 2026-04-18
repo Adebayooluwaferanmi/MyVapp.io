@@ -1,8 +1,10 @@
-import { ElectionEligibilityStatus, Prisma } from "@prisma/client";
+import { ElectionEligibilityStatus, ElectionStatus, Prisma, UserRole, UserStatus } from "@prisma/client";
 
 import { AppError } from "../../lib/app-error";
 import { env } from "../../config/env";
+import { signAuthToken } from "../../lib/jwt";
 import { sendMail } from "../../lib/mailer";
+import { hashPassword } from "../../lib/password";
 import { prisma } from "../../lib/prisma";
 import { slugify } from "../../lib/slug";
 import { recordAuditLog } from "../audit/audit.service";
@@ -11,7 +13,7 @@ import {
   type ParsedEligibilityRow,
   type RejectedEligibilityRow
 } from "./eligibility.import";
-import { resolveElectionInviteExpiry } from "./eligibility.policy";
+import { canClaimElectionInvite, resolveElectionInviteExpiry } from "./eligibility.policy";
 import type {
   CommitElectionEligibilityImportInput,
   ListElectionEligibilityQuery,
@@ -41,6 +43,33 @@ type EligibilityWithLatestInvite = {
     usedAt: Date | null;
     revokedAt: Date | null;
   }>;
+};
+
+type PublicClaimInviteRecord = {
+  id: string;
+  expiresAt: Date;
+  usedAt: Date | null;
+  revokedAt: Date | null;
+  eligibility: {
+    id: string;
+    memberUniqueId: string;
+    fullName: string;
+    email: string;
+    status: ElectionEligibilityStatus;
+    claimedByUserId: string | null;
+    election: {
+      id: string;
+      title: string;
+      status: ElectionStatus;
+      startsAt: Date | null;
+      endsAt: Date | null;
+      organization: {
+        id: string;
+        name: string;
+        slug: string;
+      };
+    };
+  };
 };
 
 async function getElectionWithOrganizationOrThrow(organizationId: string, electionId: string) {
@@ -198,6 +227,188 @@ function buildElectionClaimUrl(publicSlug: string, token: string) {
 
 function latestInvite(eligibility: EligibilityWithLatestInvite) {
   return eligibility.invites[0] ?? null;
+}
+
+function sanitizeAuthUser(user: {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: UserRole;
+  createdAt: Date;
+}) {
+  return {
+    id: user.id,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: user.role,
+    createdAt: user.createdAt
+  };
+}
+
+function splitFullName(fullName: string) {
+  const parts = fullName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return {
+      firstName: "Election",
+      lastName: "Voter"
+    };
+  }
+
+  if (parts.length === 1) {
+    return {
+      firstName: parts[0]!,
+      lastName: "Voter"
+    };
+  }
+
+  return {
+    firstName: parts[0]!,
+    lastName: parts.slice(1).join(" ")
+  };
+}
+
+function getClaimInviteState(record: PublicClaimInviteRecord, now = new Date()) {
+  if (record.revokedAt || record.eligibility.status === ElectionEligibilityStatus.REVOKED) {
+    return {
+      canClaim: false,
+      status: "REVOKED" as const,
+      message: "This invite has been revoked."
+    };
+  }
+
+  if (record.eligibility.status === ElectionEligibilityStatus.VOTED) {
+    return {
+      canClaim: false,
+      status: "VOTED" as const,
+      message: "This election access has already been used to submit a ballot."
+    };
+  }
+
+  if (record.usedAt || record.eligibility.status === ElectionEligibilityStatus.CLAIMED) {
+    return {
+      canClaim: false,
+      status: "CLAIMED" as const,
+      message: "This invite has already been claimed."
+    };
+  }
+
+  if (
+    record.eligibility.election.status === ElectionStatus.CLOSED ||
+    record.eligibility.election.status === ElectionStatus.ARCHIVED ||
+    (record.eligibility.election.endsAt &&
+      record.eligibility.election.endsAt.getTime() <= now.getTime())
+  ) {
+    return {
+      canClaim: false,
+      status: "CLOSED" as const,
+      message: "This election is no longer accepting new voter claims."
+    };
+  }
+
+  if (
+    record.eligibility.status === ElectionEligibilityStatus.EXPIRED ||
+    record.expiresAt.getTime() <= now.getTime()
+  ) {
+    return {
+      canClaim: false,
+      status: "EXPIRED" as const,
+      message: "This invite has expired."
+    };
+  }
+
+  if (
+    !canClaimElectionInvite({
+      eligibilityStatus: record.eligibility.status,
+      inviteExpiresAt: record.expiresAt,
+      inviteUsedAt: record.usedAt,
+      inviteRevokedAt: record.revokedAt,
+      electionEndsAt: record.eligibility.election.endsAt,
+      now
+    })
+  ) {
+    return {
+      canClaim: false,
+      status: "UNAVAILABLE" as const,
+      message: "This invite is no longer available."
+    };
+  }
+
+  return {
+    canClaim: true,
+    status: "ACTIVE" as const,
+    message: "This invite is ready to be claimed."
+  };
+}
+
+async function getPublicClaimInviteRecordOrThrow(electionSlug: string, token: string) {
+  const tokenHash = hashElectionInviteToken(token);
+  const invite = await prisma.electionInvite.findFirst({
+    where: {
+      tokenHash,
+      eligibility: {
+        election: {
+          publicSlug: electionSlug
+        }
+      }
+    },
+    select: {
+      id: true,
+      expiresAt: true,
+      usedAt: true,
+      revokedAt: true,
+      eligibility: {
+        select: {
+          id: true,
+          memberUniqueId: true,
+          fullName: true,
+          email: true,
+          status: true,
+          claimedByUserId: true,
+          election: {
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              startsAt: true,
+              endsAt: true,
+              organization: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!invite) {
+    const election = await prisma.election.findUnique({
+      where: {
+        publicSlug: electionSlug
+      },
+      select: {
+        id: true
+      }
+    });
+
+    if (!election) {
+      throw new AppError("Election claim link not found.", 404);
+    }
+
+    throw new AppError("This election invite is invalid or no longer available.", 404);
+  }
+
+  return invite as PublicClaimInviteRecord;
 }
 
 function getBulkSendSkipReason(eligibility: EligibilityWithLatestInvite) {
@@ -734,48 +945,188 @@ export async function resendElectionInvitation(
   };
 }
 
-export async function getPublicElectionClaimContext(electionSlug: string, _token: string) {
-  const election = await prisma.election.findUnique({
-    where: {
-      publicSlug: electionSlug
+export async function getPublicElectionClaimContext(electionSlug: string, token: string) {
+  const invite = await getPublicClaimInviteRecordOrThrow(electionSlug, token);
+  const inviteState = getClaimInviteState(invite);
+
+  return {
+    election: {
+      id: invite.eligibility.election.id,
+      title: invite.eligibility.election.title,
+      organizationName: invite.eligibility.election.organization.name,
+      status: invite.eligibility.election.status,
+      startsAt: invite.eligibility.election.startsAt,
+      endsAt: invite.eligibility.election.endsAt
     },
-    include: {
-      organization: {
-        select: {
-          id: true,
-          name: true,
-          slug: true
-        }
-      }
+    invite: {
+      expiresAt: invite.expiresAt,
+      claimed: inviteState.status === "CLAIMED" || inviteState.status === "VOTED",
+      revoked: inviteState.status === "REVOKED",
+      status: inviteState.status,
+      canClaim: inviteState.canClaim,
+      message: inviteState.message,
+      email: invite.eligibility.email
     }
-  });
-
-  if (!election) {
-    throw new AppError("Election claim link not found.", 404);
-  }
-
-  throw new AppError(
-    "Public election claim is not implemented yet. Milestone 3 will add token validation and voter account claim.",
-    501
-  );
+  };
 }
 
 export async function claimPublicElectionInvite(
   electionSlug: string,
-  _input: PublicElectionClaimInput
+  input: PublicElectionClaimInput
 ) {
-  const election = await prisma.election.findUnique({
+  const invite = await getPublicClaimInviteRecordOrThrow(electionSlug, input.token);
+  const inviteState = getClaimInviteState(invite);
+
+  if (!inviteState.canClaim) {
+    throw new AppError(inviteState.message, 409);
+  }
+
+  if (
+    invite.eligibility.memberUniqueId.trim().toLowerCase() !== input.memberUniqueId.trim().toLowerCase()
+  ) {
+    throw new AppError("The member unique ID does not match this election invite.", 422);
+  }
+
+  const existingUser = await prisma.user.findUnique({
     where: {
-      publicSlug: electionSlug
+      email: invite.eligibility.email.toLowerCase()
     }
   });
 
-  if (!election) {
-    throw new AppError("Election claim link not found.", 404);
+  if (existingUser?.status === UserStatus.SUSPENDED) {
+    throw new AppError("This account is suspended and cannot claim election access.", 403);
   }
 
-  throw new AppError(
-    "Public election claim is not implemented yet. Milestone 3 will create or link voter accounts after invite verification.",
-    501
-  );
+  const generatedPasswordHash = existingUser
+    ? null
+    : await hashPassword(generateElectionInviteToken());
+
+  const result = await prisma.$transaction(async (transaction) => {
+    const latestInvite = await transaction.electionInvite.findUnique({
+      where: {
+        id: invite.id
+      },
+      select: {
+        id: true,
+        expiresAt: true,
+        usedAt: true,
+        revokedAt: true,
+        eligibility: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            memberUniqueId: true,
+            status: true,
+            claimedByUserId: true,
+            electionId: true,
+            election: {
+              select: {
+                id: true,
+                title: true,
+                status: true,
+                startsAt: true,
+                endsAt: true,
+                organization: {
+                  select: {
+                    id: true,
+                    name: true,
+                    slug: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!latestInvite) {
+      throw new AppError("This election invite is no longer available.", 404);
+    }
+
+    const latestInviteState = getClaimInviteState(latestInvite);
+
+    if (!latestInviteState.canClaim) {
+      throw new AppError(latestInviteState.message, 409);
+    }
+
+    let user = existingUser;
+
+    if (!user) {
+      const { firstName, lastName } = splitFullName(latestInvite.eligibility.fullName);
+      user = await transaction.user.create({
+        data: {
+          email: latestInvite.eligibility.email.toLowerCase(),
+          firstName,
+          lastName,
+          passwordHash: generatedPasswordHash!,
+          role: UserRole.VOTER,
+          status: UserStatus.ACTIVE
+        }
+      });
+    } else if (user.status !== UserStatus.ACTIVE) {
+      user = await transaction.user.update({
+        where: { id: user.id },
+        data: {
+          status: UserStatus.ACTIVE
+        }
+      });
+    }
+
+    const claimedAt = new Date();
+
+    await transaction.electionInvite.update({
+      where: {
+        id: latestInvite.id
+      },
+      data: {
+        usedAt: claimedAt
+      }
+    });
+
+    await transaction.electionEligibility.update({
+      where: {
+        id: latestInvite.eligibility.id
+      },
+      data: {
+        status: ElectionEligibilityStatus.CLAIMED,
+        claimedAt,
+        claimedByUserId: user.id
+      }
+    });
+
+    await recordAuditLog(
+      {
+        organizationId: latestInvite.eligibility.election.organization.id,
+        actorUserId: user.id,
+        action: "eligibility_invite.claimed",
+        targetType: "election_eligibility",
+        targetId: latestInvite.eligibility.id,
+        metadata: {
+          electionId: latestInvite.eligibility.election.id,
+          electionTitle: latestInvite.eligibility.election.title,
+          memberUniqueId: latestInvite.eligibility.memberUniqueId,
+          email: latestInvite.eligibility.email
+        }
+      },
+      transaction
+    );
+
+    return {
+      user,
+      electionTitle: latestInvite.eligibility.election.title,
+      organizationName: latestInvite.eligibility.election.organization.name
+    };
+  });
+
+  return {
+    message: `Access confirmed for ${result.organizationName} — ${result.electionTitle}.`,
+    user: sanitizeAuthUser(result.user),
+    token: signAuthToken({
+      sub: result.user.id,
+      email: result.user.email,
+      role: result.user.role
+    })
+  };
 }

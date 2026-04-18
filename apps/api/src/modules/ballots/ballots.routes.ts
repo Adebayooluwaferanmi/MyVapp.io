@@ -2,10 +2,6 @@ import { Router } from "express";
 
 import { env } from "../../config/env";
 import { createRateLimiter } from "../../middlewares/rate-limit.middleware";
-import {
-  requireOrganizationEligibleVoter,
-  requireOrganizationManager
-} from "../../middlewares/organization.middleware";
 import { getMyBallot, getResults, submitMyBallot } from "./ballots.controller";
 
 const ballotsRouter = Router({ mergeParams: true });
@@ -26,8 +22,8 @@ const ballotRateLimiter = createRateLimiter({
   }
 });
 
-ballotsRouter.get("/ballot", ballotRateLimiter, requireOrganizationEligibleVoter, getMyBallot);
-ballotsRouter.post("/ballot", ballotRateLimiter, requireOrganizationEligibleVoter, submitMyBallot);
-ballotsRouter.get("/results", requireOrganizationManager, getResults);
+ballotsRouter.get("/ballot", ballotRateLimiter, getMyBallot);
+ballotsRouter.post("/ballot", ballotRateLimiter, submitMyBallot);
+ballotsRouter.get("/results", getResults);
 
 export { ballotsRouter };

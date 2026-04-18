@@ -11,7 +11,7 @@ const ballotEligibleRoles = new Set<MembershipRole>([
   MembershipRole.VOTER
 ]);
 
-export async function requireOrganizationMember(
+export async function loadOrganizationAccessContext(
   request: Request,
   _response: Response,
   next: NextFunction
@@ -35,6 +35,11 @@ export async function requireOrganizationMember(
     return;
   }
 
+  request.organizationAccess = {
+    organizationId,
+    exists: true
+  };
+
   if (platformRole === UserRole.SUPER_ADMIN) {
     request.membership = {
       organizationId,
@@ -53,17 +58,34 @@ export async function requireOrganizationMember(
     }
   });
 
-  if (!membership) {
-    next(new AppError("You are not a member of this organization.", 403));
-    return;
-  }
-
-  request.membership = {
-    organizationId,
-    role: membership.role
-  };
+  request.membership = membership
+    ? {
+        organizationId,
+        role: membership.role
+      }
+    : undefined;
 
   next();
+}
+
+export async function requireOrganizationMember(
+  request: Request,
+  _response: Response,
+  next: NextFunction
+): Promise<void> {
+  await loadOrganizationAccessContext(request, _response, (error?: unknown) => {
+    if (error) {
+      next(error as Error);
+      return;
+    }
+
+    if (!request.membership) {
+      next(new AppError("You are not a member of this organization.", 403));
+      return;
+    }
+
+    next();
+  });
 }
 
 export function requireOrganizationManager(
@@ -72,7 +94,7 @@ export function requireOrganizationManager(
   next: NextFunction
 ): void {
   if (!request.membership) {
-    next(new AppError("Organization membership has not been loaded.", 500));
+    next(new AppError("Only organization managers can perform this action.", 403));
     return;
   }
 
@@ -90,7 +112,7 @@ export function requireOrganizationEligibleVoter(
   next: NextFunction
 ): void {
   if (!request.membership) {
-    next(new AppError("Organization membership has not been loaded.", 500));
+    next(new AppError("Only eligible voters can access or submit ballots in this organization.", 403));
     return;
   }
 

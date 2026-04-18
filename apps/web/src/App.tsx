@@ -1,4 +1,13 @@
-import { CheckCircle2, LayoutPanelTop, ShieldCheck, Vote } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  FolderKanban,
+  LayoutPanelTop,
+  Mail,
+  ShieldCheck,
+  Users,
+  Vote
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AuthCard } from "@/components/AuthCard";
@@ -76,9 +85,9 @@ function SiteHeader({
 
         {showMarketingNav ? (
           <nav className="hidden items-center gap-6 text-sm font-medium text-[color:var(--muted-foreground)] lg:flex">
-            <a href="#principles">Why it works</a>
-            <a href="#flow">How it works</a>
-            <a href="#access">Access</a>
+            <a href="#managers">For managers</a>
+            <a href="#voters">For voters</a>
+            <a href="#access">Get started</a>
           </nav>
         ) : (
           <Badge variant="outline">Workspace</Badge>
@@ -147,14 +156,19 @@ export default function App() {
     }
   }
 
-  function handleAuthenticated(payload: AuthResponse) {
-    const nextSession = {
-      token: payload.token,
-      user: payload.user
-    };
-
+  function persistSession(nextSession: StoredSession) {
     window.localStorage.setItem("myvapp.session", JSON.stringify(nextSession));
     setSession(nextSession);
+  }
+
+  function handleAuthenticated(payload: AuthResponse, preferredView?: "workspace" | "voter") {
+    const nextSession = {
+      token: payload.token,
+      user: payload.user,
+      preferredView: preferredView ?? (payload.user.role === "VOTER" ? "voter" : "workspace")
+    };
+
+    persistSession(nextSession);
   }
 
   function handleLogout() {
@@ -162,12 +176,23 @@ export default function App() {
     setSession(null);
   }
 
+  function setPreferredView(preferredView: "workspace" | "voter") {
+    if (!session) {
+      return;
+    }
+
+    persistSession({
+      ...session,
+      preferredView
+    });
+  }
+
   function handleThemeChange(theme: OrganizationThemeInput) {
     setTheme(theme);
   }
 
   if (session) {
-    const isVoterOnly = session.user.role === "VOTER";
+    const isVoterOnly = session.user.role === "VOTER" || session.preferredView === "voter";
 
     return (
       <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,color-mix(in_srgb,var(--primary)_10%,transparent),transparent_35%),radial-gradient(circle_at_bottom_left,color-mix(in_srgb,var(--accent)_12%,transparent),transparent_40%),var(--background)] text-[color:var(--foreground)]">
@@ -179,6 +204,9 @@ export default function App() {
               onLogout={handleLogout}
               onRefreshProfile={refreshProfile}
               onThemeChange={handleThemeChange}
+              onSwitchToWorkspace={
+                session.user.role === "VOTER" ? undefined : () => setPreferredView("workspace")
+              }
               session={session}
             />
           ) : (
@@ -215,96 +243,190 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,color-mix(in_srgb,var(--primary)_10%,transparent),transparent_35%),radial-gradient(circle_at_bottom_left,color-mix(in_srgb,var(--accent)_12%,transparent),transparent_40%),var(--background)] text-[color:var(--foreground)]">
       <SiteHeader healthMessage={healthMessage} />
-      <main className="mx-auto w-[min(1280px,calc(100%-1.25rem))] space-y-12 py-8 md:space-y-16 md:py-10">
-        <section className="grid gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(22rem,0.7fr)]">
-          <Card className="overflow-hidden border-white/70 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--card)_92%,white),color-mix(in_srgb,var(--secondary)_65%,white))]">
-            <CardContent className="space-y-6 p-8 md:p-10">
-              <Badge variant="outline">Simple election software</Badge>
-              <div className="space-y-4">
-                <h1 className="max-w-3xl font-[family:var(--font-heading)] text-5xl leading-[1.02] md:text-6xl">
-                  Run your election without the clutter.
-                </h1>
-                <p className="max-w-2xl text-base leading-7 text-[color:var(--muted-foreground)] md:text-lg">
-                  Set up elections, manage members, and let people vote in a flow that is easy to
-                  follow from start to finish.
+      <main className="mx-auto w-[min(1440px,calc(100%-1.25rem))] space-y-12 py-8 md:space-y-16 md:py-10 xl:space-y-20">
+        <section className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]">
+          <Card className="overflow-hidden border-white/70 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--card)_92%,white),color-mix(in_srgb,var(--secondary)_52%,white))] shadow-[0_36px_110px_-56px_rgba(15,23,42,0.55)]">
+            <CardContent className="grid gap-8 p-8 md:p-10 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.75fr)]">
+              <div className="space-y-6">
+                <Badge variant="outline">Election management platform</Badge>
+                <div className="space-y-4">
+                  <h1 className="max-w-4xl font-[family:var(--font-heading)] text-5xl leading-[0.98] md:text-6xl xl:text-7xl">
+                    Set up and run elections without turning the process into admin overhead.
+                  </h1>
+                  <p className="max-w-2xl text-base leading-7 text-[color:var(--muted-foreground)] md:text-lg">
+                    MyVapp is built first for managers: create elections, import the voter registry,
+                    send claim links, open voting, and review turnout and results from one place.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="success">{healthMessage}</Badge>
+                  <Badge variant="outline">Registry import</Badge>
+                  <Badge variant="outline">Invite claim flow</Badge>
+                  <Badge variant="outline">Manager workspace</Badge>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button onClick={() => document.getElementById("access")?.scrollIntoView({ behavior: "smooth" })} type="button">
+                    Set up and run an election
+                    <ArrowRight className="size-4" />
+                  </Button>
+                  <Button
+                    onClick={() => document.getElementById("voters")?.scrollIntoView({ behavior: "smooth" })}
+                    type="button"
+                    variant="outline"
+                  >
+                    Access your election
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid gap-4 self-start">
+                {[
+                  ["Create the election", "Build the event, add offices, and prepare the ballot structure."],
+                  ["Import the voter registry", "Upload CSV or XLSX, review errors, and commit clean eligibility records."],
+                  ["Send invites and run voting", "Email one-time claim links, open voting, and track turnout without exposing live tallies."]
+                ].map(([title, body], index) => (
+                  <div key={title} className="rounded-[calc(var(--radius)-0.25rem)] border border-white/80 bg-white/85 p-5">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--muted-foreground)]">
+                      0{index + 1}
+                    </p>
+                    <p className="mt-3 font-semibold">{title}</p>
+                    <p className="mt-2 text-sm leading-6 text-[color:var(--muted-foreground)]">{body}</p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card id="access" className="border-white/70 bg-white/95 shadow-[0_24px_70px_-42px_rgba(15,23,42,0.4)]">
+            <CardHeader className="space-y-3">
+              <Badge variant="outline">Get started</Badge>
+              <CardTitle>Managers start here</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-3 rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/55 p-4">
+                <p className="font-semibold">Use the workspace to:</p>
+                <div className="space-y-3">
+                  {[
+                    "Create organizations and elections.",
+                    "Import your voter registry and send claim links.",
+                    "Open voting, monitor turnout, and review results after close."
+                  ].map((item) => (
+                    <div key={item} className="flex items-start gap-3">
+                      <CheckCircle2 className="mt-0.5 size-4 text-[color:var(--success)]" />
+                      <p className="text-sm text-[color:var(--muted-foreground)]">{item}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <AuthCard onAuthenticated={handleAuthenticated} />
+            </CardContent>
+          </Card>
+        </section>
+
+        <section id="managers" className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <Card className="border-white/70 bg-[linear-gradient(180deg,color-mix(in_srgb,var(--card)_96%,white),white)]">
+            <CardContent className="space-y-6 p-7 md:p-8">
+              <Badge variant="outline">For managers</Badge>
+              <div className="space-y-3">
+                <h2 className="font-[family:var(--font-heading)] text-4xl leading-tight md:text-5xl">
+                  One workspace for setup, registry, turnout, and results.
+                </h2>
+                <p className="max-w-2xl text-base leading-7 text-[color:var(--muted-foreground)]">
+                  The manager path is the main path: you should be able to tell what to do next
+                  without hunting through a voter-shaped interface.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="success">{healthMessage}</Badge>
-                <Badge variant="outline">Clear ballot flow</Badge>
-                <Badge variant="outline">Admin and voter views</Badge>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            {[
+              {
+                Icon: FolderKanban,
+                title: "Set up the event",
+                body: "Create the election, choose dates, add offices, and keep the structure in one view."
+              },
+              {
+                Icon: Users,
+                title: "Manage eligibility",
+                body: "Import the voter registry, review invalid rows, and send secure one-time claim links."
+              },
+              {
+                Icon: ShieldCheck,
+                title: "Run with control",
+                body: "Watch turnout while voting is open and keep candidate tallies hidden until the election closes."
+              }
+            ].map(({ Icon, title, body }) => (
+              <Card key={title} className="border-white/70 bg-white/95">
+                <CardContent className="space-y-4 p-6">
+                  <div className="flex size-12 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,var(--primary),var(--accent))] text-white">
+                    <Icon className="size-5" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="font-[family:var(--font-heading)] text-2xl">{title}</h3>
+                    <p className="text-sm leading-6 text-[color:var(--muted-foreground)]">{body}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+
+        <section id="voters" className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(20rem,0.95fr)]">
+          <Card className="border-white/70 bg-white/95">
+            <CardContent className="grid gap-6 p-7 md:p-8 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.75fr)]">
+              <div className="space-y-5">
+                <Badge variant="outline">For voters</Badge>
+                <div className="space-y-3">
+                  <h2 className="font-[family:var(--font-heading)] text-4xl leading-tight">A direct path in, not a maze.</h2>
+                  <p className="max-w-2xl text-base leading-7 text-[color:var(--muted-foreground)]">
+                    Voters receive a claim link by email, confirm their member ID, and enter the
+                    election only when access is valid for that event.
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  {[
+                    ["01", "Open the invite", "Use the link from email to reach the election access page."],
+                    ["02", "Confirm your ID", "Enter the member ID from the voter registry to claim access."],
+                    ["03", "Vote when open", "Review each office, submit once, and see results after the election closes."]
+                  ].map(([step, title, body]) => (
+                    <div key={step} className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/55 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--muted-foreground)]">{step}</p>
+                      <p className="mt-3 font-semibold">{title}</p>
+                      <p className="mt-2 text-sm leading-6 text-[color:var(--muted-foreground)]">{body}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[linear-gradient(180deg,white,color-mix(in_srgb,var(--secondary)_55%,white))] p-5">
+                <div className="flex size-12 items-center justify-center rounded-2xl bg-[color:var(--secondary)] text-[color:var(--primary)]">
+                  <Mail className="size-5" />
+                </div>
+                <p className="mt-5 font-semibold">Already have an invite?</p>
+                <p className="mt-2 text-sm leading-6 text-[color:var(--muted-foreground)]">
+                  Open the link from your email, or sign in if you have already claimed access and want to return to your election.
+                </p>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="border-white/70 bg-white/95">
-            <CardHeader className="space-y-3">
-              <Badge variant="outline">What matters</Badge>
-              <CardTitle>What voters need to see</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {[
-                ["A clear order", "People should always know what comes next: choose, review, then submit."],
-                ["Important details nearby", "Status, dates, and voting rules should sit close to the ballot."],
-                ["Choices that are easy to read", "Candidates should be easy to compare without making the page feel busy."]
-              ].map(([title, body]) => (
-                <div key={title} className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/55 p-4">
-                  <p className="font-semibold">{title}</p>
-                  <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">{body}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </section>
-
-        <section id="principles" className="grid gap-4 md:grid-cols-3">
-          {[
-            {
-              Icon: ShieldCheck,
-              title: "Clear choices",
-              body: "Voters should be able to compare candidates quickly without sorting through clutter."
-            },
-            {
-              Icon: Vote,
-              title: "Status and dates",
-              body: "Election status, start time, end time, and progress should stay easy to find."
-            },
-            {
-              Icon: LayoutPanelTop,
-              title: "Review before submit",
-              body: "A simple summary helps people check their choices before they send a final vote."
-            }
-          ].map(({ Icon, title, body }) => (
-            <Card key={title} className="border-white/70 bg-white/95">
-              <CardContent className="space-y-4 p-6">
-                <div className="flex size-12 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,var(--primary),var(--accent))] text-white">
-                  <Icon className="size-5" />
-                </div>
-                <div className="space-y-2">
-                  <h2 className="font-[family:var(--font-heading)] text-2xl">{title}</h2>
-                  <p className="text-sm leading-6 text-[color:var(--muted-foreground)]">{body}</p>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </section>
-
-        <section id="flow" className="space-y-5">
-          <div className="space-y-2">
-            <Badge variant="outline">How it works</Badge>
-            <h2 className="font-[family:var(--font-heading)] text-4xl">A simple voting flow</h2>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
             {[
-              ["01", "Pick your election", "Start by choosing the organization and election you want to work on."],
-              ["02", "Review each office", "Candidates are grouped by office so voters can make one clear choice at a time."],
-              ["03", "Check your ballot", "A review panel keeps your progress and selections in one place."],
-              ["04", "Manage from one workspace", "Admins can set up elections, open voting, and check results without jumping around."]
-            ].map(([step, title, body]) => (
-              <Card key={step} className="border-white/70 bg-white/95">
+              {
+                Icon: Vote,
+                title: "Ballot flow stays simple",
+                body: "Status, offices, and final review stay close to the ballot so voters never have to guess what comes next."
+              },
+              {
+                Icon: LayoutPanelTop,
+                title: "Results stay controlled",
+                body: "Managers watch turnout while voting is open; tallies wait until the election closes."
+              }
+            ].map(({ Icon, title, body }) => (
+              <Card key={title} className="border-white/70 bg-white/95">
                 <CardContent className="space-y-4 p-6">
-                  <div className="flex size-12 items-center justify-center rounded-full bg-[color:var(--secondary)] text-sm font-bold text-[color:var(--primary)]">
-                    {step}
+                  <div className="flex size-12 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,var(--primary),var(--accent))] text-white">
+                    <Icon className="size-5" />
                   </div>
                   <div className="space-y-2">
                     <h3 className="font-semibold">{title}</h3>
@@ -314,43 +436,6 @@ export default function App() {
               </Card>
             ))}
           </div>
-        </section>
-
-        <section id="access" className="grid gap-6 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-          <AuthCard onAuthenticated={handleAuthenticated} />
-          <Card className="border-white/70 bg-white/95">
-            <CardHeader className="space-y-3">
-              <Badge variant="outline">Who it's for</Badge>
-              <CardTitle>Built for admins and voters</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-3">
-                {[
-                  "Create an account and sign in securely.",
-                  "Switch between organizations without losing your place.",
-                  "Set up elections, offices, and candidates in one workspace.",
-                  "Vote with a simple ballot and a final review step."
-                ].map((item) => (
-                  <div key={item} className="flex items-start gap-3 rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-[color:var(--muted)]/50 p-3">
-                    <CheckCircle2 className="mt-0.5 size-4 text-[color:var(--success)]" />
-                    <p className="text-sm text-[color:var(--muted-foreground)]">{item}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="grid gap-4 md:grid-cols-3">
-                {[
-                  ["Managers", "Create elections, manage members, and keep voting on track."],
-                  ["Voters", "Open a ballot, choose candidates, and submit once."],
-                  ["Platform", "Keep the frontend, API, and voting flow working together cleanly."]
-                ].map(([title, body]) => (
-                  <div key={title} className="rounded-[calc(var(--radius)-0.25rem)] border border-[color:var(--border)] bg-white p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--muted-foreground)]">{title}</p>
-                    <p className="mt-3 text-sm leading-6 text-[color:var(--foreground)]">{body}</p>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
         </section>
       </main>
       <SiteFooter />

@@ -4,7 +4,7 @@ import { getRequestAuditContext } from "../../lib/request-audit";
 import { electionParamsSchema, submitBallotSchema } from "./ballots.schemas";
 import {
   getBallotForElection,
-  getElectionResults,
+  getElectionResultsForViewer,
   submitBallot
 } from "./ballots.service";
 
@@ -34,7 +34,13 @@ export async function submitMyBallot(request: Request, response: Response): Prom
 
 export async function getResults(request: Request, response: Response): Promise<void> {
   const { organizationId, electionId } = electionParamsSchema.parse(request.params);
-  const results = await getElectionResults(organizationId, electionId);
+  const results = await getElectionResultsForViewer({
+    organizationId,
+    electionId,
+    userId: request.user!.sub,
+    platformRole: request.user?.role,
+    membershipRole: request.membership?.role
+  });
 
   response.status(200).json(results);
 }

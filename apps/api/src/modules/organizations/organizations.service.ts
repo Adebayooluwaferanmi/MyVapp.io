@@ -1,6 +1,12 @@
 import crypto from "node:crypto";
 
-import { MembershipRole, Prisma, UserRole, UserStatus } from "@prisma/client";
+import {
+  ElectionEligibilityStatus,
+  MembershipRole,
+  Prisma,
+  UserRole,
+  UserStatus
+} from "@prisma/client";
 
 import { AppError } from "../../lib/app-error";
 import { hashPassword } from "../../lib/password";
@@ -77,11 +83,32 @@ export async function listOrganizationsForUser(userId: string, platformRole?: st
 
   const organizations = await prisma.organization.findMany({
     where: {
-      members: {
-        some: {
-          userId
+      OR: [
+        {
+          members: {
+            some: {
+              userId,
+              role: {
+                in: Array.from(managerRoles)
+              }
+            }
+          }
+        },
+        {
+          elections: {
+            some: {
+              eligibilities: {
+                some: {
+                  claimedByUserId: userId,
+                  status: {
+                    in: [ElectionEligibilityStatus.CLAIMED, ElectionEligibilityStatus.VOTED]
+                  }
+                }
+              }
+            }
+          }
         }
-      }
+      ]
     },
     orderBy: {
       createdAt: "desc"

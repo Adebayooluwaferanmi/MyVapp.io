@@ -14,16 +14,21 @@ import {
   createCandidate,
   createElection,
   createOffice,
-  getElectionDetails,
+  getElectionDetailsForUser,
   listElectionOffices,
   listOfficeCandidates,
-  listOrganizationElections,
+  listOrganizationElectionsForUser,
   updateElectionStatus
 } from "./elections.service";
 
 export async function listElections(request: Request, response: Response): Promise<void> {
   const { organizationId } = organizationParamsSchema.parse(request.params);
-  const elections = await listOrganizationElections(organizationId);
+  const elections = await listOrganizationElectionsForUser({
+    organizationId,
+    userId: request.user!.sub,
+    platformRole: request.user?.role,
+    membershipRole: request.membership?.role
+  });
 
   response.status(200).json({
     elections
@@ -51,7 +56,13 @@ export async function createElectionForOrganization(
 
 export async function getElection(request: Request, response: Response): Promise<void> {
   const { organizationId, electionId } = electionParamsSchema.parse(request.params);
-  const election = await getElectionDetails(organizationId, electionId);
+  const election = await getElectionDetailsForUser({
+    organizationId,
+    electionId,
+    userId: request.user!.sub,
+    platformRole: request.user?.role,
+    membershipRole: request.membership?.role
+  });
 
   response.status(200).json({
     election
