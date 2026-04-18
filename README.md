@@ -1,8 +1,8 @@
 # MyVapp
 
-MyVapp is a voting platform scaffold for groups, organizations, associations, unions, schools, faith communities, and other communities that need a trusted way to elect people into customizable offices.
+MyVapp is a multi-tenant election administration platform for organizations that need a controlled, auditable, and trustworthy way to run internal elections.
 
-The current repository started effectively empty, so this scaffold establishes a professional baseline rather than migrating legacy code. It includes:
+MyVapp is not an open self-registration voting app.
 
 - A TypeScript Express API with register, login, JWT auth, and bcrypt password hashing
 - A PostgreSQL schema for users, organizations, elections, offices, candidates, ballots, and votes
@@ -16,17 +16,47 @@ The current repository started effectively empty, so this scaffold establishes a
 - Election-scoped theme presets for organizations
 - Election-scoped voter registry preview, eligibility roster, and manual invite delivery
 - Architecture and setup documentation
+The platform is built for groups, associations, unions, schools, faith communities, clubs, alumni bodies, cooperatives, and other organizations that need structured election operations with controlled voter eligibility.
 
-## Product intent
+## What MyVapp does
 
-This project is shaped around a real voting domain:
+MyVapp runs elections through a controlled operational flow:
 
-- One platform can serve multiple organizations
-- Each organization can define its own election cycles
-- Each election can define one or more offices
-- Each office can accept candidates and record votes
-- Users can belong to organizations with different roles
-- Authentication is implemented first so later admin and voter flows sit on a secure base
+- an organization-wide manager creates and configures an election
+- the election window, structure, and policies are defined before voting begins
+- the approved voter roll is imported through CSV
+- invite links are previewed and sent to eligible voters
+- voters activate temporary election-scoped access through one-time invite links
+- voters participate only within the configured election period
+- election operations are auditable
+- result visibility follows election policy
+
+## Core product rules
+
+The following rules define MyVapp:
+
+### Access model
+
+- voter access is election-scoped
+- invite links are one-time use
+- voter access comes from an approved voter roll
+- voter participation does not depend on open public registration
+- managers are organization-wide
+
+### Invite behavior
+
+- bulk invite sending is supported
+- individual resend is supported
+- invite preview is required before sending
+- individual resend supports searching for a specific voter email
+
+### Session behavior
+
+- a voter can access from multiple devices
+- only one final ballot submission is allowed
+- prior active session invalidation on new login is configurable per election
+
+### Result visibility
 
 ## Voter registry roadmap
 
@@ -48,6 +78,22 @@ The workflow being introduced is:
 This is intentionally safer than handing out a reusable “voting ID” that could be forwarded or reused outside the intended election context.
 
 ## Proposed folder structure
+- results can be visible while the election is open
+- result visibility is configurable per election
+- live result visibility is limited to authorized roles such as chair and observer, based on election policy
+
+### Operational features
+
+- CSV import with downloadable error report
+- election dashboard with total voters imported, invites sent, invites activated, ballots cast, and turnout percentage
+- audit trail
+- election lock after opening
+- exportable voter roll
+- exportable results
+- ballot receipt reference without exposing vote content
+- tamper-evident audit support in a later phase
+
+## Repository structure
 
 ```text
 .
@@ -59,58 +105,97 @@ This is intentionally safer than handing out a reusable “voting ID” that cou
 │   │       ├── lib
 │   │       ├── middlewares
 │   │       ├── modules
-│   │       │   ├── auth
-│   │       │   └── health
 │   │       ├── routes
 │   │       └── types
 │   └── web
 │       └── src
-│           ├── components
-│           └── lib
 ├── docs
 ├── .env.example
 └── compose.yml
 ```
 
-## Why this structure
+## Why the repository is structured this way
 
-- `apps/api` keeps backend concerns isolated and modular.
-- `apps/web` gives the frontend its own build and deployment boundary.
-- `modules` inside the API are organized by domain capability, which scales better than dumping everything into `controllers` and `services`.
-- `prisma` owns the database model and seeding.
-- `docs` is where architectural explanations, ADRs, and onboarding docs should live.
+- `apps/api` contains election rules, access control, integrity checks, and backend services
+- `apps/web` contains the frontend for administrators, observers, and voters
+- `modules` inside the API are organized by domain capability
+- `prisma` owns the relational schema and seed flow
+- `docs` contains architecture, implementation, and operational documentation
 
-As the app grows, the recommended next modules inside `apps/api/src/modules` are:
+This structure reflects the product itself. Election systems expand through clear domain boundaries, not through a flat codebase.
 
+## Backend direction
+
+The backend is organized around domain responsibilities.
+
+The core direction is:
+
+```text
+modules
+├── auth
+├── organizations
+├── elections
+├── ballots
+├── election-voters
+├── election-invites
+├── election-access
+├── imports
+├── exports
+├── dashboard
+└── audit
+```
+
+### Existing modules
+
+- `auth`, for platform and organization-level users
 - `organizations`
-- `memberships`
 - `elections`
-- `offices`
-- `candidates`
 - `ballots`
-- `votes`
+
+### New modules in the election-scoped model
+
+- `election-voters`
+- `election-invites`
+- `election-access`
+- `imports`
+- `exports`
+- `dashboard`
 - `audit`
 
 ## Tech stack
 
 - Backend: Node.js, TypeScript, Express, Prisma, PostgreSQL
-- Auth: JWT access tokens, bcrypt password hashing
+- Auth for managers and platform users: JWT access tokens, bcrypt password hashing
 - Frontend: React, TypeScript, Vite
 - Infrastructure: Docker, Docker Compose, Nginx for static frontend hosting
 
+## Current system baseline
+
+The current repository already includes:
+
+- a TypeScript Express API
+- JWT-based authentication for platform and organization-level users
+- a PostgreSQL schema for organizations, elections, offices, candidates, ballots, and votes
+- a React frontend workspace
+- Dockerfiles for the API and frontend
+- a `compose.yml` stack for PostgreSQL, API, and web
+- environment variable templates
+- backend endpoints for organization, election, office, candidate, ballot, and result flows
+- architecture and setup documentation
+
+This is the current baseline. The product direction now moves from generic org-member voting toward election-scoped access and controlled voter-roll operations.
+
 ## Branch workflow
 
-Development is now intended to happen on `dev`.
+Development happens on `dev`.
 
-- Active development branch: `dev`
-- Merge target branch in this repo: `main`
-- Policy: only merge `dev` into `main` after tests pass and the feature set has been manually smoke-tested
-
-If you want the default branch renamed from `main` to `master`, we can do that explicitly later, but the current repo branch is `main`.
+- active development branch: `dev`
+- merge target branch: `main`
+- merge policy: only merge `dev` into `main` after tests pass and the feature set has been manually smoke-tested
 
 ## CI/CD
 
-GitHub Actions now runs a CI workflow from [.github/workflows/ci.yml](/mnt/e/Alixa/MyVapp.io/.github/workflows/ci.yml:1).
+GitHub Actions runs CI from `.github/workflows/ci.yml`.
 
 It runs on:
 
@@ -118,7 +203,7 @@ It runs on:
 - pushes to `dev`
 - pushes to `main`
 
-The workflow currently verifies:
+The workflow verifies:
 
 - API unit tests
 - API TypeScript build
@@ -126,11 +211,11 @@ The workflow currently verifies:
 - Prisma schema push against a Postgres service
 - seeded smoke flow against the built API
 
-This gives the project a usable CI gate for branch-based delivery, so `dev` can feed `main` through verified pull requests.
+GitHub Actions also runs a release workflow from `.github/workflows/release.yml`.
 
-GitHub Actions also now runs a release workflow from [.github/workflows/release.yml](/mnt/e/Alixa/MyVapp.io/.github/workflows/release.yml:1).
+It runs when a semantic version tag such as `v0.1.1` is pushed.
 
-It runs when a semantic version tag such as `v0.1.1` is pushed. The release workflow:
+The release workflow:
 
 - installs dependencies
 - runs API tests
@@ -138,11 +223,11 @@ It runs when a semantic version tag such as `v0.1.1` is pushed. The release work
 - pushes the Prisma schema to Postgres
 - seeds demo data
 - runs the smoke flow
-- publishes a GitHub release with generated notes and bundled API/web build artifacts
+- publishes a GitHub release with generated notes and bundled API and web build artifacts
 
-### Release process
+## Release process
 
-For the current setup, release from `main` after CI is green:
+Release from `main` after CI is green:
 
 ```bash
 git checkout main
@@ -151,28 +236,15 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
-That tag push triggers the release workflow automatically.
-
-### Branch protection note
-
-I attempted to enable GitHub branch protection for `main`, but GitHub rejected it for this private repository with:
-
-`Upgrade to GitHub Pro or make this repository public to enable this feature.`
-
-So the repo now has CI and automated releases in place, but required status checks on `main` will need either:
-
-- a public repository, or
-- a GitHub plan that supports branch protection on private repositories
-
 ## Environment setup
 
-1. Copy the env template:
+Copy the environment template:
 
 ```bash
 cp .env.example .env
 ```
 
-2. Review and change these values before real use:
+Review and update the values before real use:
 
 - `POSTGRES_PASSWORD`
 - `JWT_SECRET`
@@ -207,13 +279,13 @@ Services:
 
 ## Run without Docker
 
-Prerequisites:
+### Prerequisites
 
 - Node.js 20+
 - npm 10+
 - PostgreSQL 16+
 
-Backend:
+### Backend
 
 ```bash
 cd apps/api
@@ -224,7 +296,7 @@ npm run db:seed
 npm run dev
 ```
 
-Frontend:
+### Frontend
 
 ```bash
 cd apps/web
@@ -246,7 +318,7 @@ npm run dev:web
 npm test
 ```
 
-`npm run db:setup` prepares a usable demo workspace, not just a blank admin account. It generates the Prisma client, pushes the schema, and seeds a demo organization with sample users, elections, offices, candidates, and result data.
+`npm run db:setup` prepares a usable demo workspace. It generates the Prisma client, pushes the schema, and seeds demo data.
 
 ## Demo accounts after seeding
 
@@ -255,22 +327,11 @@ With the default `.env.example` values, these accounts are created automatically
 - Platform admin: `admin@myvapp.local` / `ChangeMe123!`
 - Organization manager: `manager@myvapp.local` / `ChangeMe123!`
 - Demo voter: `voter1@myvapp.local` / `ChangeMe123!`
-- Additional seeded voters for result data: `voter2@myvapp.local`, `voter3@myvapp.local` / `ChangeMe123!`
+- Additional seeded voters: `voter2@myvapp.local`, `voter3@myvapp.local` / `ChangeMe123!`
 
-This means the frontend can be checked immediately:
+These accounts exist to verify the current baseline application behavior.
 
-- sign in as the admin or manager to manage elections
-- sign in as `voter1@myvapp.local` to cast a ballot in the open election
-- inspect the closed seeded election to confirm the results view is populated
-
-## Organization roles and ballot eligibility
-
-Organization roles now drive both management access and ballot eligibility:
-
-- `OWNER`: full organization control and eligible to vote
-- `ADMIN`: can manage elections and members, and is eligible to vote
-- `VOTER`: can access and submit ballots, but cannot manage organization settings
-- `MEMBER`: basic membership only, without ballot access
+## Current API baseline
 
 Ballot access is now restricted to eligible members only. A user must belong to the organization with one of these roles to open or submit a ballot:
 
@@ -406,6 +467,7 @@ The frontend is now a real working workspace rather than only a login page. It c
 - manager-facing result tallies
 
 ## API starter endpoints
+The current API exposes these baseline routes:
 
 - `GET /api/v1`
 - `GET /api/v1/health`
@@ -431,80 +493,57 @@ The frontend is now a real working workspace rather than only a login page. It c
 - `POST /api/v1/organizations/:organizationId/elections/:electionId/ballot`
 - `GET /api/v1/organizations/:organizationId/elections/:electionId/results`
 
-### Example register payload
+These routes represent the current scaffold baseline. The next architecture phases extend this toward voter-roll import, invite lifecycle management, election-scoped access, dashboarding, exports, and audit.
 
-```json
-{
-  "firstName": "Ada",
-  "lastName": "Okafor",
-  "email": "ada@example.com",
-  "password": "SecurePass1"
-}
-```
+## Current database baseline
 
-### Example login payload
+The current Prisma schema models the following core entities:
 
-```json
-{
-  "email": "ada@example.com",
-  "password": "SecurePass1"
-}
-```
+- `User`
+- `Organization`
+- `OrganizationMember`
+- `Election`
+- `Office`
+- `Candidate`
+- `Ballot`
+- `Vote`
 
-## Database design
+This baseline supports the current scaffold.
 
-The initial Prisma schema models the platform around a multi-tenant election workflow:
+The next model expansion adds election-scoped entities such as:
 
-- `User`: platform identity and hashed credentials
-- `Organization`: a tenant such as a church, union, club, or association
-- `OrganizationMember`: connects users to organizations and roles
-- `Election`: a voting exercise owned by an organization
-- `Office`: a role being contested in an election
-- `Candidate`: a person or profile standing for an office
-- `Ballot`: one voter's submission for one election
-- `Vote`: the office-level selections inside a ballot
+- `ElectionVoter`
+- `ElectionInvite`
+- `ElectionSession`
+- `ElectionAuditLog`
 
-## Voting flow
+## Current voting flow baseline
 
-The current backend now supports this core sequence:
+The current backend supports this baseline flow:
 
-1. Register or log in.
-2. Create an organization.
-3. Create an election under that organization.
-4. Add offices and candidates.
-5. Change the election status to `OPEN`.
-6. Fetch the ballot for the current voter.
-7. Submit one ballot with one candidate per office.
-8. View manager-only result tallies.
+1. register or log in
+2. create an organization
+3. create an election under that organization
+4. add offices and candidates
+5. change the election status to `OPEN`
+6. fetch the ballot for the current voter
+7. submit one ballot with one candidate per office
+8. view manager-facing result tallies
 
-## Authentication notes
-
-- Passwords are hashed with `bcryptjs`
-- Login returns a JWT access token
-- Protected routes use `Authorization: Bearer <token>`
-- `GET /api/v1/auth/me` proves the auth guard and token verification path
-
-For a later hardening pass, the next improvements should be:
-
-- Refresh tokens
-- Email verification
-- Password reset flows
-- Rate limiting
-- Audit logging
-- Organization-scoped permissions
+This is the current implementation baseline. The product direction now evolves toward controlled election-scoped participation through imported voter rolls and one-time access links.
 
 ## Testing
 
-API unit tests are scaffolded with Vitest for schema and helper validation:
+API unit tests run with Vitest:
 
 ```bash
 cd apps/api
 npm test
 ```
 
-They currently cover:
+The current tests cover baseline validation and helper rules such as:
 
-- slug generation rules
+- slug generation
 - auth payload validation
 - organization payload validation
 - election, office, and candidate payload validation
@@ -512,21 +551,41 @@ They currently cover:
 
 ## Docker notes
 
-The current Docker setup is designed to be a strong starter:
+The current Docker setup follows a clean service split:
 
 - PostgreSQL runs as a separate service with health checks and a persistent volume
-- The API image builds TypeScript, generates Prisma client code, and applies schema updates at startup
-- The web image builds static assets and serves them through Nginx
+- the API image builds TypeScript, generates Prisma client code, and applies schema updates at startup
+- the web image builds static assets and serves them through Nginx
 
-## Recommended next implementation steps
+## Architecture direction
 
-1. Add update and delete flows for organizations, elections, offices, and candidates.
-2. Add office rules for multi-seat positions and abstentions.
-3. Add organization admin invites and richer organization-scoped roles.
-4. Replace `prisma db push` in production with formal Prisma migrations.
-5. Add integration tests for auth, election management, and ballot submission endpoints.
-6. Add CI to lint, build, and validate the Prisma schema on every push.
+The next architecture phases are:
 
-## Architecture doc
+1. redesign the database model around election-scoped access
+2. add voter CSV import and validation flows
+3. add invite preview, send, and resend workflows
+4. add election-scoped session activation and access control
+5. refactor ballot submission around election-scoped voter identity
+6. add dashboard metrics, exports, and audit inspection
+7. add deeper security controls and tamper-evident audit support
+8. expand automated testing and CI enforcement
 
-See [docs/architecture.md](docs/architecture.md) for a deeper explanation of the proposed system structure.
+## Documentation
+
+For the full system direction, see:
+
+- `docs/architecture.md`
+
+## Summary
+
+MyVapp is a controlled election operations platform.
+
+The system is built around:
+
+- organization-managed elections
+- approved voter-roll import
+- one-time invite-based access
+- temporary election-scoped participation
+- one final ballot submission
+- configurable result visibility
+- auditability and operational trust
