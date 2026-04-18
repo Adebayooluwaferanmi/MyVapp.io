@@ -80,3 +80,334 @@ The following rules define MyVapp:
 ├── docs
 ├── .env.example
 └── compose.yml
+```
+
+## Why the repository is structured this way
+
+- `apps/api` contains election rules, access control, integrity checks, and backend services
+- `apps/web` contains the frontend for administrators, observers, and voters
+- `modules` inside the API are organized by domain capability
+- `prisma` owns the relational schema and seed flow
+- `docs` contains architecture, implementation, and operational documentation
+
+This structure reflects the product itself. Election systems expand through clear domain boundaries, not through a flat codebase.
+
+## Backend direction
+
+The backend is organized around domain responsibilities.
+
+The core direction is:
+
+```text
+modules
+├── auth
+├── organizations
+├── elections
+├── ballots
+├── election-voters
+├── election-invites
+├── election-access
+├── imports
+├── exports
+├── dashboard
+└── audit
+```
+
+### Existing modules
+
+- `auth`, for platform and organization-level users
+- `organizations`
+- `elections`
+- `ballots`
+
+### New modules in the election-scoped model
+
+- `election-voters`
+- `election-invites`
+- `election-access`
+- `imports`
+- `exports`
+- `dashboard`
+- `audit`
+
+## Tech stack
+
+- Backend: Node.js, TypeScript, Express, Prisma, PostgreSQL
+- Auth for managers and platform users: JWT access tokens, bcrypt password hashing
+- Frontend: React, TypeScript, Vite
+- Infrastructure: Docker, Docker Compose, Nginx for static frontend hosting
+
+## Current system baseline
+
+The current repository already includes:
+
+- a TypeScript Express API
+- JWT-based authentication for platform and organization-level users
+- a PostgreSQL schema for organizations, elections, offices, candidates, ballots, and votes
+- a React frontend workspace
+- Dockerfiles for the API and frontend
+- a `compose.yml` stack for PostgreSQL, API, and web
+- environment variable templates
+- backend endpoints for organization, election, office, candidate, ballot, and result flows
+- architecture and setup documentation
+
+This is the current baseline. The product direction now moves from generic org-member voting toward election-scoped access and controlled voter-roll operations.
+
+## Branch workflow
+
+Development happens on `dev`.
+
+- active development branch: `dev`
+- merge target branch: `main`
+- merge policy: only merge `dev` into `main` after tests pass and the feature set has been manually smoke-tested
+
+## CI/CD
+
+GitHub Actions runs CI from `.github/workflows/ci.yml`.
+
+It runs on:
+
+- pull requests into `main`
+- pushes to `dev`
+- pushes to `main`
+
+The workflow verifies:
+
+- API unit tests
+- API TypeScript build
+- frontend production build
+- Prisma schema push against a Postgres service
+- seeded smoke flow against the built API
+
+GitHub Actions also runs a release workflow from `.github/workflows/release.yml`.
+
+It runs when a semantic version tag such as `v0.1.1` is pushed.
+
+The release workflow:
+
+- installs dependencies
+- runs API tests
+- builds the frontend
+- pushes the Prisma schema to Postgres
+- seeds demo data
+- runs the smoke flow
+- publishes a GitHub release with generated notes and bundled API and web build artifacts
+
+## Release process
+
+Release from `main` after CI is green:
+
+```bash
+git checkout main
+git pull origin main
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+## Environment setup
+
+Copy the environment template:
+
+```bash
+cp .env.example .env
+```
+
+Review and update the values before real use:
+
+- `POSTGRES_PASSWORD`
+- `JWT_SECRET`
+- `SEED_ADMIN_PASSWORD`
+- `CLIENT_URL`
+- `CORS_ORIGIN`
+- `VITE_API_URL`
+
+## Run with Docker Compose
+
+```bash
+docker compose -f compose.yml up --build
+```
+
+Services:
+
+- Frontend: `http://localhost:8080`
+- API: `http://localhost:4000/api/v1`
+- Health endpoint: `http://localhost:4000/api/v1/health`
+- PostgreSQL: `localhost:5432`
+
+## Run without Docker
+
+### Prerequisites
+
+- Node.js 20+
+- npm 10+
+- PostgreSQL 16+
+
+### Backend
+
+```bash
+cd apps/api
+npm install
+npx prisma generate
+npx prisma db push
+npm run db:seed
+npm run dev
+```
+
+### Frontend
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+For local non-Docker development, update `DATABASE_URL` in `.env` to point to your local PostgreSQL instance, usually `localhost` instead of `postgres`.
+
+## Workspace commands
+
+From the repo root:
+
+```bash
+npm install
+npm run db:setup
+npm run dev:api
+npm run dev:web
+npm test
+```
+
+`npm run db:setup` prepares a usable demo workspace. It generates the Prisma client, pushes the schema, and seeds demo data.
+
+## Demo accounts after seeding
+
+With the default `.env.example` values, these accounts are created automatically:
+
+- Platform admin: `admin@myvapp.local` / `ChangeMe123!`
+- Organization manager: `manager@myvapp.local` / `ChangeMe123!`
+- Demo voter: `voter1@myvapp.local` / `ChangeMe123!`
+- Additional seeded voters: `voter2@myvapp.local`, `voter3@myvapp.local` / `ChangeMe123!`
+
+These accounts exist to verify the current baseline application behavior.
+
+## Current API baseline
+
+The current API exposes these baseline routes:
+
+- `GET /api/v1`
+- `GET /api/v1/health`
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `GET /api/v1/auth/me`
+- `GET /api/v1/organizations`
+- `POST /api/v1/organizations`
+- `GET /api/v1/organizations/:organizationId`
+- `GET /api/v1/organizations/:organizationId/members`
+- `POST /api/v1/organizations/:organizationId/members`
+- `PATCH /api/v1/organizations/:organizationId/members/:memberId`
+- `GET /api/v1/organizations/:organizationId/elections`
+- `POST /api/v1/organizations/:organizationId/elections`
+- `GET /api/v1/organizations/:organizationId/elections/:electionId`
+- `PATCH /api/v1/organizations/:organizationId/elections/:electionId/status`
+- `GET /api/v1/organizations/:organizationId/elections/:electionId/offices`
+- `POST /api/v1/organizations/:organizationId/elections/:electionId/offices`
+- `GET /api/v1/organizations/:organizationId/elections/:electionId/offices/:officeId/candidates`
+- `POST /api/v1/organizations/:organizationId/elections/:electionId/offices/:officeId/candidates`
+- `GET /api/v1/organizations/:organizationId/elections/:electionId/ballot`
+- `POST /api/v1/organizations/:organizationId/elections/:electionId/ballot`
+- `GET /api/v1/organizations/:organizationId/elections/:electionId/results`
+
+These routes represent the current scaffold baseline. The next architecture phases extend this toward voter-roll import, invite lifecycle management, election-scoped access, dashboarding, exports, and audit.
+
+## Current database baseline
+
+The current Prisma schema models the following core entities:
+
+- `User`
+- `Organization`
+- `OrganizationMember`
+- `Election`
+- `Office`
+- `Candidate`
+- `Ballot`
+- `Vote`
+
+This baseline supports the current scaffold.
+
+The next model expansion adds election-scoped entities such as:
+
+- `ElectionVoter`
+- `ElectionInvite`
+- `ElectionSession`
+- `ElectionAuditLog`
+
+## Current voting flow baseline
+
+The current backend supports this baseline flow:
+
+1. register or log in
+2. create an organization
+3. create an election under that organization
+4. add offices and candidates
+5. change the election status to `OPEN`
+6. fetch the ballot for the current voter
+7. submit one ballot with one candidate per office
+8. view manager-facing result tallies
+
+This is the current implementation baseline. The product direction now evolves toward controlled election-scoped participation through imported voter rolls and one-time access links.
+
+## Testing
+
+API unit tests run with Vitest:
+
+```bash
+cd apps/api
+npm test
+```
+
+The current tests cover baseline validation and helper rules such as:
+
+- slug generation
+- auth payload validation
+- organization payload validation
+- election, office, and candidate payload validation
+- ballot payload validation
+
+## Docker notes
+
+The current Docker setup follows a clean service split:
+
+- PostgreSQL runs as a separate service with health checks and a persistent volume
+- the API image builds TypeScript, generates Prisma client code, and applies schema updates at startup
+- the web image builds static assets and serves them through Nginx
+
+## Architecture direction
+
+The next architecture phases are:
+
+1. redesign the database model around election-scoped access
+2. add voter CSV import and validation flows
+3. add invite preview, send, and resend workflows
+4. add election-scoped session activation and access control
+5. refactor ballot submission around election-scoped voter identity
+6. add dashboard metrics, exports, and audit inspection
+7. add deeper security controls and tamper-evident audit support
+8. expand automated testing and CI enforcement
+
+## Documentation
+
+For the full system direction, see:
+
+- `docs/architecture.md`
+
+## Summary
+
+MyVapp is a controlled election operations platform.
+
+The system is built around:
+
+- organization-managed elections
+- approved voter-roll import
+- one-time invite-based access
+- temporary election-scoped participation
+- one final ballot submission
+- configurable result visibility
+- auditability and operational trust
