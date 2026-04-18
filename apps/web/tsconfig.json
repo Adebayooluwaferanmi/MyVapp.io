@@ -12,6 +12,7 @@
     "module": "ESNext",
     "moduleResolution": "Node",
     "baseUrl": ".",
+    "types": ["vitest/globals", "@testing-library/jest-dom"],
     "paths": {
       "@/*": ["src/*"]
     },
