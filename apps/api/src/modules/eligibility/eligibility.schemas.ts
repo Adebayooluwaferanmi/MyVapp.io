@@ -1,6 +1,7 @@
-import { ElectionEligibilityStatus, ImportSourceFormat } from "@prisma/client";
+import { ElectionVoterStatus, ImportSourceFormat } from "@prisma/client";
 import { z } from "zod";
 
+// Compatibility schemas preserved while legacy eligibility naming is phased out.
 export const electionEligibilityParamsSchema = z.object({
   organizationId: z.string().cuid(),
   electionId: z.string().cuid()
@@ -15,7 +16,8 @@ export const eligibilityInviteParamsSchema = electionEligibilityParamsSchema.ext
 });
 
 export const listElectionEligibilityQuerySchema = z.object({
-  status: z.nativeEnum(ElectionEligibilityStatus).optional()
+  status: z.nativeEnum(ElectionVoterStatus).optional(),
+  search: z.string().trim().min(1).max(200).optional()
 });
 
 export const previewElectionEligibilityImportSchema = z.object({
@@ -29,7 +31,8 @@ export const commitElectionEligibilityImportSchema = z.object({
 });
 
 export const sendElectionInvitationsSchema = z.object({
-  eligibilityIds: z.array(z.string().cuid()).min(1).max(500).optional()
+  eligibilityIds: z.array(z.string().cuid()).min(1).max(500).optional(),
+  search: z.string().trim().min(1).max(200).optional()
 });
 
 export const publicElectionClaimContextParamsSchema = z.object({

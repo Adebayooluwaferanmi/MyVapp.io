@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 
 import {
-  ElectionEligibilityStatus,
   MembershipRole,
   Prisma,
   UserRole,
@@ -24,8 +23,7 @@ import type {
 const managerRoles = new Set<MembershipRole>([MembershipRole.OWNER, MembershipRole.ADMIN]);
 const ballotEligibleRoles = new Set<MembershipRole>([
   MembershipRole.OWNER,
-  MembershipRole.ADMIN,
-  MembershipRole.VOTER
+  MembershipRole.ADMIN
 ]);
 
 const organizationCountInclude = {
@@ -97,12 +95,9 @@ export async function listOrganizationsForUser(userId: string, platformRole?: st
         {
           elections: {
             some: {
-              eligibilities: {
+              accessAssignments: {
                 some: {
-                  claimedByUserId: userId,
-                  status: {
-                    in: [ElectionEligibilityStatus.CLAIMED, ElectionEligibilityStatus.VOTED]
-                  }
+                  userId
                 }
               }
             }
@@ -226,7 +221,7 @@ async function syncUserPlatformRole(
     }
   });
 
-  const nextRole = adminMembership ? UserRole.ORG_ADMIN : UserRole.VOTER;
+  const nextRole = adminMembership ? UserRole.ORG_ADMIN : UserRole.STAFF;
 
   if (user.role !== nextRole) {
     await transaction.user.update({
@@ -343,7 +338,7 @@ export async function addOrganizationMember(
           firstName: input.firstName.trim(),
           lastName: input.lastName.trim(),
           passwordHash: await hashPassword((temporaryPassword = buildTemporaryPassword())),
-          role: managerRoles.has(input.role) ? UserRole.ORG_ADMIN : UserRole.VOTER,
+          role: managerRoles.has(input.role) ? UserRole.ORG_ADMIN : UserRole.STAFF,
           status: UserStatus.INVITED
         }
       }));

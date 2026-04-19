@@ -7,6 +7,11 @@ declare global {
         sub: string;
         email: string;
         role: string;
+        tokenType?: "user" | "election_voter";
+        electionId?: string;
+        electionVoterId?: string;
+        electionSessionId?: string;
+        electionSessionJti?: string;
       };
       membership?: {
         organizationId: string;

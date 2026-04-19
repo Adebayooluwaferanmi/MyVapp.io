@@ -13,7 +13,7 @@ describe("eligibility schemas", () => {
       previewElectionEligibilityImportSchema.parse({
         filename: "voter-registry.csv",
         format: "CSV",
-        contentBase64: "bWVtYmVyX3VuaXF1ZV9pZCxmdWxsX25hbWUsYWdlLGVtYWls"
+        contentBase64: "bWVtYmVyX3VuaXF1ZV9pZCxmdWxsX25hbWUsZW1haWwscGhvbmU="
       })
     ).toMatchObject({
       filename: "voter-registry.csv",

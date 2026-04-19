@@ -9,8 +9,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const inviteToken = "claim-token-for-integration-flow-0001";
 
-vi.mock("../modules/eligibility/eligibility.tokens", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../modules/eligibility/eligibility.tokens")>();
+vi.mock("../modules/election-invites/election-invites.tokens", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../modules/election-invites/election-invites.tokens")>();
 
   return {
     ...actual,

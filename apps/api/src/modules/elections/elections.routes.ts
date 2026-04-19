@@ -1,7 +1,9 @@
 import { Router } from "express";
 
 import { ballotsRouter } from "../ballots/ballots.routes";
-import { eligibilityAdminRouter } from "../eligibility/eligibility.routes";
+import { electionAccessAdminRouter } from "../election-access/election-access.routes";
+import { electionInvitesAdminRouter } from "../election-invites/election-invites.routes";
+import { electionVotersAdminRouter } from "../election-voters/election-voters.routes";
 import {
   requireOrganizationManager,
   requireOrganizationMember
@@ -28,7 +30,9 @@ electionsRouter.patch(
   requireOrganizationManager,
   updateElectionStatusForOrganization
 );
-electionsRouter.use("/:electionId", eligibilityAdminRouter);
+electionsRouter.use("/:electionId", electionVotersAdminRouter);
+electionsRouter.use("/:electionId", electionInvitesAdminRouter);
+electionsRouter.use("/:electionId", electionAccessAdminRouter);
 electionsRouter.use("/:electionId", ballotsRouter);
 
 electionsRouter.get("/:electionId/offices", requireOrganizationMember, listOffices);

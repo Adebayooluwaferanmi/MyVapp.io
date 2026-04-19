@@ -10,8 +10,8 @@
     "prisma:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
-    "test": "TMPDIR=/tmp vitest run",
-    "test:integration": "npm run db:push && TMPDIR=/tmp RUN_DB_TESTS=1 vitest run src/integration/election-claim-flow.test.ts",
+    "test": "TMPDIR=/tmp vitest run src/lib/**/*.test.ts src/middlewares/**/*.test.ts src/modules/**/*.test.ts",
+    "test:integration": "npm run db:push && TMPDIR=/tmp RUN_DB_TESTS=1 vitest run src/integration/*.test.ts",
     "test:watch": "TMPDIR=/tmp vitest",
     "smoke": "node scripts/smoke.cjs"
   },

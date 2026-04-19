@@ -36,10 +36,10 @@ describe("organization schemas", () => {
       firstName: "Ada",
       lastName: "Okafor",
       email: "ada@example.com",
-      role: "VOTER"
+      role: "MEMBER"
     });
 
-    expect(payload.role).toBe("VOTER");
+    expect(payload.role).toBe("MEMBER");
   });
 
   it("accepts a valid organization theme update payload", () => {

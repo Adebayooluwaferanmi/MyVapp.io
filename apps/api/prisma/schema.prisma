@@ -10,8 +10,7 @@ datasource db {
 enum UserRole {
   SUPER_ADMIN
   ORG_ADMIN
-  ELECTION_MANAGER
-  VOTER
+  STAFF
 }
 
 enum UserStatus {
@@ -24,19 +23,19 @@ enum MembershipRole {
   OWNER
   ADMIN
   MEMBER
-  VOTER
 }
 
 enum ElectionStatus {
   DRAFT
-  SCHEDULED
+  READY
   OPEN
   CLOSED
   ARCHIVED
 }
 
-enum ElectionEligibilityStatus {
-  PENDING
+enum ElectionVoterStatus {
+  IMPORTED
+  INVITE_PENDING
   INVITED
   CLAIMED
   VOTED
@@ -49,193 +48,319 @@ enum ImportSourceFormat {
   XLSX
 }
 
+enum ElectionResultsVisibility {
+  NONE_DURING_OPEN
+  CHAIR_ONLY_DURING_OPEN
+  CHAIR_AND_OBSERVERS_DURING_OPEN
+  ORG_MANAGERS_DURING_OPEN
+  PUBLIC_AFTER_CLOSE
+}
+
+enum ElectionAccessRole {
+  CHAIR
+  OBSERVER
+}
+
+enum InviteDeliveryChannel {
+  EMAIL
+}
+
 model User {
-  id                           String                        @id @default(cuid())
-  email                        String                        @unique
-  passwordHash                 String
-  firstName                    String
-  lastName                     String
-  role                         UserRole                      @default(VOTER)
-  status                       UserStatus                    @default(ACTIVE)
-  createdAt                    DateTime                      @default(now())
-  updatedAt                    DateTime                      @updatedAt
-  memberships                  OrganizationMember[]
-  ballots                      Ballot[]
-  auditLogs                    AuditLog[]
-  uploadedEligibilityImportJobs ElectionEligibilityImportJob[] @relation("EligibilityImportUploader")
-  claimedElectionEligibilities ElectionEligibility[]         @relation("ClaimedElectionEligibility")
+  id                         String                       @id @default(cuid())
+  email                      String                       @unique
+  passwordHash               String
+  firstName                  String
+  lastName                   String
+  role                       UserRole                     @default(STAFF)
+  status                     UserStatus                   @default(ACTIVE)
+  createdAt                  DateTime                     @default(now())
+  updatedAt                  DateTime                     @updatedAt
+
+  memberships                OrganizationMember[]
+  auditLogs                  AuditLog[]                   @relation("AuditActorUser")
+  uploadedVoterImportJobs    ElectionVoterImportJob[]     @relation("ElectionVoterImportUploader")
+  createdInvites             ElectionInvite[]             @relation("ElectionInviteCreator")
+  electionAccessAssignments  ElectionAccessAssignment[]
+  claimedElectionVoters      ElectionVoter[]              @relation("ElectionVoterClaimedBy")
+
+  @@index([role])
+  @@index([status])
 }
 
 model Organization {
-  id          String               @id @default(cuid())
-  name        String
-  slug        String               @unique
-  description String?
-  themePreset String               @default("myvapp-default")
-  themeOverrides Json?
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
-  elections   Election[]
-  members     OrganizationMember[]
-  auditLogs   AuditLog[]
+  id               String               @id @default(cuid())
+  name             String
+  slug             String               @unique
+  description      String?
+  themePreset      String               @default("myvapp-default")
+  themeOverrides   Json?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  members          OrganizationMember[]
+  elections        Election[]
+  auditLogs        AuditLog[]
+
+  @@index([createdAt])
 }
 
 model OrganizationMember {
-  id             String         @id @default(cuid())
-  organizationId String
-  userId         String
-  role           MembershipRole @default(VOTER)
-  createdAt      DateTime       @default(now())
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id               String         @id @default(cuid())
+  organizationId   String
+  userId           String
+  role             MembershipRole @default(MEMBER)
+  createdAt        DateTime       @default(now())
+
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, userId])
+  @@index([organizationId, role])
 }
 
 model Election {
-  id                String                        @id @default(cuid())
-  organizationId    String
-  title             String
-  slug              String
-  publicSlug        String?                       @unique
-  description       String?
-  status            ElectionStatus                @default(DRAFT)
-  startsAt          DateTime?
-  endsAt            DateTime?
-  createdAt         DateTime                      @default(now())
-  updatedAt         DateTime                      @updatedAt
-  organization      Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  offices           Office[]
-  ballots           Ballot[]
-  eligibilityImports ElectionEligibilityImportJob[]
-  eligibilities     ElectionEligibility[]
+  id                               String                     @id @default(cuid())
+  organizationId                   String
+  title                            String
+  slug                             String
+  publicSlug                       String?                    @unique
+  description                      String?
+  status                           ElectionStatus             @default(DRAFT)
+  startsAt                         DateTime?
+  endsAt                           DateTime?
+  openedAt                         DateTime?
+  closedAt                         DateTime?
+
+  resultsVisibilityMode            ElectionResultsVisibility  @default(NONE_DURING_OPEN)
+  lockAfterOpen                    Boolean                    @default(true)
+  invalidatePriorSessionOnNewLogin Boolean                    @default(false)
+
+  createdAt                        DateTime                   @default(now())
+  updatedAt                        DateTime                   @updatedAt
+
+  organization                     Organization               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  offices                          Office[]
+  voterImportJobs                  ElectionVoterImportJob[]
+  voters                           ElectionVoter[]
+  invites                          ElectionInvite[]
+  sessions                         ElectionSession[]
+  ballots                          Ballot[]
+  accessAssignments                ElectionAccessAssignment[]
+  auditLogs                        AuditLog[]
 
   @@unique([organizationId, slug])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+  @@index([publicSlug])
 }
 
-model ElectionEligibilityImportJob {
-  id               String             @id @default(cuid())
-  electionId        String
+model ElectionAccessAssignment {
+  id               String              @id @default(cuid())
+  electionId       String
+  userId           String
+  role             ElectionAccessRole
+  createdAt        DateTime            @default(now())
+
+  election         Election            @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([electionId, userId, role])
+  @@index([electionId, role])
+}
+
+model ElectionVoterImportJob {
+  id               String              @id @default(cuid())
+  electionId       String
   uploadedByUserId String
   filename         String
   sourceFormat     ImportSourceFormat
   summary          Json?
   committedAt      DateTime?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  election         Election           @relation(fields: [electionId], references: [id], onDelete: Cascade)
-  uploadedBy       User               @relation("EligibilityImportUploader", fields: [uploadedByUserId], references: [id], onDelete: Cascade)
-  eligibilities    ElectionEligibility[]
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  election         Election            @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  uploadedBy       User                @relation("ElectionVoterImportUploader", fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+  voters           ElectionVoter[]
 
   @@index([electionId, createdAt(sort: Desc)])
 }
 
-model ElectionEligibility {
-  id              String                    @id @default(cuid())
+model ElectionVoter {
+  id               String              @id @default(cuid())
   electionId       String
   importJobId      String?
-  memberUniqueId  String
-  fullName        String
-  age             Int
-  email           String
-  status          ElectionEligibilityStatus @default(PENDING)
-  claimedByUserId String?
-  claimedAt       DateTime?
-  votedAt         DateTime?
-  createdAt       DateTime                  @default(now())
-  updatedAt       DateTime                  @updatedAt
-  election        Election                  @relation(fields: [electionId], references: [id], onDelete: Cascade)
-  importJob       ElectionEligibilityImportJob? @relation(fields: [importJobId], references: [id], onDelete: SetNull)
-  claimedBy       User?                     @relation("ClaimedElectionEligibility", fields: [claimedByUserId], references: [id], onDelete: SetNull)
-  invites         ElectionInvite[]
+  memberUniqueId   String
+  fullName         String
+  email            String
+  phone            String
+  status           ElectionVoterStatus @default(IMPORTED)
+
+  claimedByUserId  String?
+  claimedAt        DateTime?
+  votedAt          DateTime?
+
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  election         Election            @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  importJob        ElectionVoterImportJob? @relation(fields: [importJobId], references: [id], onDelete: SetNull)
+  claimedBy        User?               @relation("ElectionVoterClaimedBy", fields: [claimedByUserId], references: [id], onDelete: SetNull)
+
+  invites          ElectionInvite[]
+  sessions         ElectionSession[]
+  ballots          Ballot[]
+  auditLogs        AuditLog[]          @relation("AuditActorElectionVoter")
 
   @@unique([electionId, memberUniqueId])
   @@unique([electionId, email])
   @@index([electionId, status])
+  @@index([electionId, claimedAt])
+  @@index([electionId, votedAt])
 }
 
 model ElectionInvite {
-  id            String              @id @default(cuid())
-  eligibilityId String
-  tokenHash     String              @unique
-  expiresAt     DateTime
-  sentAt        DateTime?
-  usedAt        DateTime?
-  revokedAt     DateTime?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  eligibility   ElectionEligibility @relation(fields: [eligibilityId], references: [id], onDelete: Cascade)
+  id               String               @id @default(cuid())
+  electionId       String
+  electionVoterId  String
+  createdByUserId  String?
+  deliveryChannel  InviteDeliveryChannel @default(EMAIL)
 
-  @@index([eligibilityId, createdAt(sort: Desc)])
+  tokenHash        String               @unique
+  expiresAt        DateTime
+  sentAt           DateTime?
+  lastSentAt       DateTime?
+  usedAt           DateTime?
+  revokedAt        DateTime?
+  resentCount      Int                  @default(0)
+
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  election         Election             @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  electionVoter    ElectionVoter        @relation(fields: [electionVoterId], references: [id], onDelete: Cascade)
+  createdBy        User?                @relation("ElectionInviteCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([electionVoterId, createdAt(sort: Desc)])
+  @@index([electionId, createdAt(sort: Desc)])
+  @@index([electionId, expiresAt])
+}
+
+model ElectionSession {
+  id               String        @id @default(cuid())
+  electionId       String
+  electionVoterId  String
+  sessionJti       String
+  issuedAt         DateTime      @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  lastSeenAt       DateTime?
+  ipAddress        String?
+  userAgent        String?
+  deviceLabel      String?
+
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  election         Election      @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  electionVoter    ElectionVoter @relation(fields: [electionVoterId], references: [id], onDelete: Cascade)
+  ballots          Ballot[]
+
+  @@unique([electionId, sessionJti])
+  @@index([electionVoterId, expiresAt])
+  @@index([electionId, revokedAt])
+  @@index([electionId, createdAt(sort: Desc)])
 }
 
 model Office {
-  id          String      @id @default(cuid())
-  electionId  String
-  title       String
-  description String?
-  seats       Int         @default(1)
-  sortOrder   Int         @default(0)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  election    Election    @relation(fields: [electionId], references: [id], onDelete: Cascade)
-  candidates  Candidate[]
-  votes       Vote[]
+  id               String        @id @default(cuid())
+  electionId       String
+  title            String
+  description      String?
+  seats            Int           @default(1)
+  sortOrder        Int           @default(0)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  election         Election      @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  candidates       Candidate[]
+  votes            Vote[]
+
+  @@index([electionId, sortOrder])
 }
 
 model Candidate {
-  id          String    @id @default(cuid())
-  officeId    String
-  displayName String
-  bio         String?
-  manifesto   String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  office      Office    @relation(fields: [officeId], references: [id], onDelete: Cascade)
-  votes       Vote[]
+  id               String        @id @default(cuid())
+  officeId         String
+  displayName      String
+  bio              String?
+  manifesto        String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  office           Office        @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  votes            Vote[]
+
+  @@index([officeId, createdAt])
 }
 
 model Ballot {
-  id         String    @id @default(cuid())
-  electionId String
-  voterId    String
-  submittedAt DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  election   Election  @relation(fields: [electionId], references: [id], onDelete: Cascade)
-  voter      User      @relation(fields: [voterId], references: [id], onDelete: Cascade)
-  votes      Vote[]
+  id               String         @id @default(cuid())
+  electionId       String
+  electionVoterId  String
+  submittedSessionId String?
+  receiptReference String         @unique
+  submittedAt      DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
-  @@unique([electionId, voterId])
+  election         Election       @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  electionVoter    ElectionVoter  @relation(fields: [electionVoterId], references: [id], onDelete: Cascade)
+  submittedSession ElectionSession? @relation(fields: [submittedSessionId], references: [id], onDelete: SetNull)
+  votes            Vote[]
+
+  @@unique([electionId, electionVoterId])
+  @@index([electionId, submittedAt])
 }
 
 model Vote {
-  id          String    @id @default(cuid())
-  ballotId    String
-  officeId    String
-  candidateId String
-  createdAt   DateTime  @default(now())
-  ballot      Ballot    @relation(fields: [ballotId], references: [id], onDelete: Cascade)
-  office      Office    @relation(fields: [officeId], references: [id], onDelete: Cascade)
-  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id               String        @id @default(cuid())
+  ballotId         String
+  officeId         String
+  candidateId      String
+  createdAt        DateTime      @default(now())
+
+  ballot           Ballot        @relation(fields: [ballotId], references: [id], onDelete: Cascade)
+  office           Office        @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  candidate        Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
   @@unique([ballotId, officeId])
+  @@index([officeId, candidateId])
 }
 
 model AuditLog {
-  id             String       @id @default(cuid())
-  organizationId String
-  actorUserId    String
-  action         String
-  targetType     String
-  targetId       String?
-  ipAddress      String?
-  userAgent      String?
-  metadata       Json?
-  createdAt      DateTime     @default(now())
-  actor          User         @relation(fields: [actorUserId], references: [id], onDelete: Cascade)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id                 String         @id @default(cuid())
+  organizationId     String
+  electionId         String?
+  actorUserId        String?
+  actorElectionVoterId String?
+  action             String
+  targetType         String
+  targetId           String?
+  ipAddress          String?
+  userAgent          String?
+  metadata           Json?
+  previousHash       String?
+  entryHash          String?
+  createdAt          DateTime       @default(now())
+
+  organization       Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  election           Election?      @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  actorUser          User?          @relation("AuditActorUser", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorElectionVoter ElectionVoter? @relation("AuditActorElectionVoter", fields: [actorElectionVoterId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, createdAt(sort: Desc)])
+  @@index([electionId, createdAt(sort: Desc)])
   @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([actorElectionVoterId, createdAt(sort: Desc)])
 }

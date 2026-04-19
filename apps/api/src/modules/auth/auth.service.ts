@@ -53,7 +53,8 @@ export async function registerUser(input: RegisterInput) {
     token: signAuthToken({
       sub: user.id,
       email: user.email,
-      role: user.role
+      role: user.role,
+      tokenType: "user"
     })
   };
 }
@@ -80,7 +81,8 @@ export async function loginUser(input: LoginInput) {
     token: signAuthToken({
       sub: user.id,
       email: user.email,
-      role: user.role
+      role: user.role,
+      tokenType: "user"
     })
   };
 }

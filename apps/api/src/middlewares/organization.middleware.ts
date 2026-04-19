@@ -5,11 +5,6 @@ import { AppError } from "../lib/app-error";
 import { prisma } from "../lib/prisma";
 
 const managerRoles = new Set<MembershipRole>([MembershipRole.OWNER, MembershipRole.ADMIN]);
-const ballotEligibleRoles = new Set<MembershipRole>([
-  MembershipRole.OWNER,
-  MembershipRole.ADMIN,
-  MembershipRole.VOTER
-]);
 
 export async function loadOrganizationAccessContext(
   request: Request,
@@ -18,10 +13,21 @@ export async function loadOrganizationAccessContext(
 ): Promise<void> {
   const organizationId = request.params.organizationId;
   const userId = request.user?.sub;
+  const tokenType = request.user?.tokenType;
   const platformRole = request.user?.role as UserRole | undefined;
 
   if (!organizationId || !userId) {
     next(new AppError("Organization access context is missing.", 400));
+    return;
+  }
+
+  if (tokenType === "election_voter") {
+    request.membership = undefined;
+    request.organizationAccess = {
+      organizationId,
+      exists: true
+    };
+    next();
     return;
   }
 
@@ -111,12 +117,17 @@ export function requireOrganizationEligibleVoter(
   _response: Response,
   next: NextFunction
 ): void {
-  if (!request.membership) {
-    next(new AppError("Only eligible voters can access or submit ballots in this organization.", 403));
+  if (!request.user) {
+    next(new AppError("Authentication token is required.", 401));
     return;
   }
 
-  if (!ballotEligibleRoles.has(request.membership.role as MembershipRole)) {
+  if (request.user.tokenType === "election_voter") {
+    next();
+    return;
+  }
+
+  if (!request.membership || !managerRoles.has(request.membership.role as MembershipRole)) {
     next(new AppError("Only eligible voters can access or submit ballots in this organization.", 403));
     return;
   }

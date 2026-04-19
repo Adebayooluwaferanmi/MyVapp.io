@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 
-import { publicElectionClaimContextParamsSchema } from "../eligibility/eligibility.schemas";
+import { publicElectionClaimContextParamsSchema } from "../election-access/election-access.schemas";
 import { getPublicElectionResults } from "./ballots.service";
 
 export async function getPublicResults(request: Request, response: Response): Promise<void> {
