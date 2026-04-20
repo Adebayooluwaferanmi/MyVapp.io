@@ -21,17 +21,4 @@ electionVotersAdminRouter.post(
   postElectionVoterImportCommit
 );
 
-// Backward-compatible aliases during migration away from eligibility naming.
-electionVotersAdminRouter.get("/eligibility", requireOrganizationManager, getElectionVoters);
-electionVotersAdminRouter.post(
-  "/eligibility-imports/preview",
-  requireOrganizationManager,
-  postElectionVoterImportPreview
-);
-electionVotersAdminRouter.post(
-  "/eligibility-imports/:importId/commit",
-  requireOrganizationManager,
-  postElectionVoterImportCommit
-);
-
 export { electionVotersAdminRouter };

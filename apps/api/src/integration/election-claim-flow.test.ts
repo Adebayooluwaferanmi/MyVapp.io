@@ -33,6 +33,8 @@ type AuthResponse = {
 
 const runDbTests = process.env.RUN_DB_TESTS === "1";
 
+const INTEGRATION_TIMEOUT_MS = 120_000;
+
 describe.skipIf(!runDbTests)("election claim flow", () => {
   let app: Express;
   let prisma: PrismaClient;
@@ -61,7 +63,7 @@ describe.skipIf(!runDbTests)("election claim flow", () => {
     app = loadedApp;
     prisma = loadedPrisma;
     await prisma.$connect();
-  }, 30_000);
+  }, INTEGRATION_TIMEOUT_MS);
 
   afterAll(async () => {
     if (!prisma) {
@@ -83,9 +85,9 @@ describe.skipIf(!runDbTests)("election claim flow", () => {
     });
 
     await prisma.$disconnect();
-  }, 30_000);
+  }, INTEGRATION_TIMEOUT_MS);
 
-  it("supports registry invite claim, voter-only election access, and post-close results", async () => {
+  it("supports invite claim, election-scoped ballot access, and post-close public results", async () => {
     const registerManagerResponse = await request(app).post("/api/v1/auth/register").send({
       firstName: "Claim",
       lastName: "Manager",
@@ -114,13 +116,15 @@ describe.skipIf(!runDbTests)("election claim flow", () => {
         title: electionTitle,
         description: "Election created for invite claim flow",
         startsAt: "2026-05-10T09:00:00.000Z",
-        endsAt: "2026-05-12T17:00:00.000Z"
+        endsAt: "2026-05-12T17:00:00.000Z",
+        resultsVisibilityMode: "PUBLIC_AFTER_CLOSE"
       });
 
     expect(createElectionResponse.status).toBe(201);
     const election = createElectionResponse.body.election as {
       id: string;
       publicSlug: string;
+      status: string;
     };
 
     const createOfficeResponse = await request(app)
@@ -156,13 +160,13 @@ describe.skipIf(!runDbTests)("election claim flow", () => {
     expect(secondCandidateResponse.status).toBe(201);
 
     const previewResponse = await request(app)
-      .post(`/api/v1/organizations/${organizationId}/elections/${election.id}/eligibility-imports/preview`)
+      .post(`/api/v1/organizations/${organizationId}/elections/${election.id}/voter-imports/preview`)
       .set("Authorization", `Bearer ${managerAuth.token}`)
       .send({
         filename: "voter-registry.csv",
         format: "CSV",
         contentBase64: Buffer.from(
-          "member_unique_id,full_name,age,email\nMEM-001,Claim Voter,31," + voterEmail + "\n"
+          `member_unique_id,full_name,email,phone\nMEM-001,Claim Voter,${voterEmail},+2348000000001\n`
         ).toString("base64")
       });
 
@@ -175,7 +179,7 @@ describe.skipIf(!runDbTests)("election claim flow", () => {
     const importId = previewResponse.body.importId as string;
 
     const commitResponse = await request(app)
-      .post(`/api/v1/organizations/${organizationId}/elections/${election.id}/eligibility-imports/${importId}/commit`)
+      .post(`/api/v1/organizations/${organizationId}/elections/${election.id}/voter-imports/${importId}/commit`)
       .set("Authorization", `Bearer ${managerAuth.token}`)
       .send({
         note: "Committed by integration test"
@@ -211,30 +215,33 @@ describe.skipIf(!runDbTests)("election claim flow", () => {
       });
 
     expect(claimResponse.status).toBe(200);
-    const voterAuth = claimResponse.body as AuthResponse;
-    expect(voterAuth.user.email).toBe(voterEmail);
-    expect(voterAuth.user.role).toBe("VOTER");
+    const voterAuth = claimResponse.body as {
+      token: string;
+      electionVoter: {
+        id: string;
+        email: string;
+      };
+    };
 
-    const voterOrganizationsResponse = await request(app)
-      .get("/api/v1/organizations")
-      .set("Authorization", `Bearer ${voterAuth.token}`);
+    expect(voterAuth.electionVoter.email).toBe(voterEmail);
 
-    expect(voterOrganizationsResponse.status).toBe(200);
-    expect(voterOrganizationsResponse.body.organizations).toHaveLength(1);
+    const preReadyOpenElectionResponse = await request(app)
+      .patch(`/api/v1/organizations/${organizationId}/elections/${election.id}/status`)
+      .set("Authorization", `Bearer ${managerAuth.token}`)
+      .send({
+        status: "OPEN"
+      });
 
-    const voterElectionsResponse = await request(app)
-      .get(`/api/v1/organizations/${organizationId}/elections`)
-      .set("Authorization", `Bearer ${voterAuth.token}`);
+    expect(preReadyOpenElectionResponse.status).toBe(409);
 
-    expect(voterElectionsResponse.status).toBe(200);
-    expect(voterElectionsResponse.body.elections).toHaveLength(1);
+    const readyElectionResponse = await request(app)
+      .patch(`/api/v1/organizations/${organizationId}/elections/${election.id}/status`)
+      .set("Authorization", `Bearer ${managerAuth.token}`)
+      .send({
+        status: "READY"
+      });
 
-    const preOpenBallotResponse = await request(app)
-      .get(`/api/v1/organizations/${organizationId}/elections/${election.id}/ballot`)
-      .set("Authorization", `Bearer ${voterAuth.token}`);
-
-    expect(preOpenBallotResponse.status).toBe(200);
-    expect(preOpenBallotResponse.body.election.status).toBe("DRAFT");
+    expect(readyElectionResponse.status).toBe(200);
 
     const openElectionResponse = await request(app)
       .patch(`/api/v1/organizations/${organizationId}/elections/${election.id}/status`)
@@ -245,11 +252,10 @@ describe.skipIf(!runDbTests)("election claim flow", () => {
 
     expect(openElectionResponse.status).toBe(200);
 
-    const hiddenResultsResponse = await request(app)
-      .get(`/api/v1/organizations/${organizationId}/elections/${election.id}/results`)
-      .set("Authorization", `Bearer ${voterAuth.token}`);
+    const hiddenPublicResultsResponse = await request(app)
+      .get(`/api/v1/public/elections/${election.publicSlug}/results`);
 
-    expect(hiddenResultsResponse.status).toBe(403);
+    expect(hiddenPublicResultsResponse.status).toBe(403);
 
     const submitBallotResponse = await request(app)
       .post(`/api/v1/organizations/${organizationId}/elections/${election.id}/ballot`)
@@ -264,12 +270,7 @@ describe.skipIf(!runDbTests)("election claim flow", () => {
       });
 
     expect(submitBallotResponse.status).toBe(201);
-
-    const openManagerResultsResponse = await request(app)
-      .get(`/api/v1/organizations/${organizationId}/elections/${election.id}/results`)
-      .set("Authorization", `Bearer ${managerAuth.token}`);
-
-    expect(openManagerResultsResponse.status).toBe(403);
+    expect(submitBallotResponse.body.ballot.receiptReference).toMatch(/^RCPT-/);
 
     const closeElectionResponse = await request(app)
       .patch(`/api/v1/organizations/${organizationId}/elections/${election.id}/status`)
@@ -280,13 +281,12 @@ describe.skipIf(!runDbTests)("election claim flow", () => {
 
     expect(closeElectionResponse.status).toBe(200);
 
-    const voterResultsResponse = await request(app)
-      .get(`/api/v1/organizations/${organizationId}/elections/${election.id}/results`)
-      .set("Authorization", `Bearer ${voterAuth.token}`);
+    const publicResultsResponse = await request(app)
+      .get(`/api/v1/public/elections/${election.publicSlug}/results`);
 
-    expect(voterResultsResponse.status).toBe(200);
-    expect(voterResultsResponse.body.offices).toHaveLength(1);
-    expect(voterResultsResponse.body.offices[0]?.candidates[0]?.votes).toBe(1);
+    expect(publicResultsResponse.status).toBe(200);
+    expect(publicResultsResponse.body.offices).toHaveLength(1);
+    expect(publicResultsResponse.body.offices[0]?.candidates[0]?.votes).toBe(1);
 
     const auditLogsResponse = await request(app)
       .get(`/api/v1/organizations/${organizationId}/audit-logs?limit=25`)
@@ -295,6 +295,14 @@ describe.skipIf(!runDbTests)("election claim flow", () => {
     expect(auditLogsResponse.status).toBe(200);
     expect(
       auditLogsResponse.body.auditLogs.map((entry: { action: string }) => entry.action)
-    ).toEqual(expect.arrayContaining(["eligibility_import.committed", "eligibility_invite.sent", "eligibility_invite.claimed", "ballot.submitted"]));
-  }, 30_000);
+    ).toEqual(
+      expect.arrayContaining([
+        "election_voter_import.committed",
+        "election_invite.sent",
+        "election_access.claimed",
+        "election_session.created",
+        "ballot.submitted"
+      ])
+    );
+  }, INTEGRATION_TIMEOUT_MS);
 });

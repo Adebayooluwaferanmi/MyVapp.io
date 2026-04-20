@@ -23,14 +23,4 @@ electionInvitesAdminRouter.post(
   postElectionInviteRevoke
 );
 
-// Backward-compatible alias for old eligibility-based route parameter naming.
-electionInvitesAdminRouter.post(
-  "/invitations/:eligibilityId/resend",
-  requireOrganizationManager,
-  (request, response, next) => {
-    request.params.electionVoterId = request.params.eligibilityId;
-    void postElectionInviteResend(request, response).catch(next);
-  }
-);
-
 export { electionInvitesAdminRouter };

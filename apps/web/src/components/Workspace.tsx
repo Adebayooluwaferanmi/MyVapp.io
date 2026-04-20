@@ -75,9 +75,9 @@ type Notice = {
 
 type WorkflowTone = "ready" | "attention" | "locked";
 
-const electionStatuses = ["DRAFT", "SCHEDULED", "OPEN", "CLOSED", "ARCHIVED"] as const;
+const electionStatuses = ["DRAFT", "READY", "OPEN", "CLOSED", "ARCHIVED"] as const;
 const managerRoles = new Set(["OWNER", "ADMIN"]);
-const membershipRoles = ["OWNER", "ADMIN", "MEMBER", "VOTER"] as const;
+const membershipRoles = ["OWNER", "ADMIN", "MEMBER"] as const;
 const workspaceSections = ["setup", "members", "structure", "vote", "results", "audit"] as const;
 
 type WorkspaceSection = (typeof workspaceSections)[number];
@@ -131,10 +131,10 @@ const initialMemberForm = {
   firstName: "",
   lastName: "",
   email: "",
-  role: "VOTER"
+  role: "MEMBER"
 };
 
-const eligibilityStatusOptions = ["ALL", "PENDING", "INVITED", "CLAIMED", "VOTED", "REVOKED", "EXPIRED"] as const;
+const eligibilityStatusOptions = ["ALL", "IMPORTED", "INVITED", "CLAIMED", "VOTED", "REVOKED", "EXPIRED"] as const;
 
 type EligibilityFilterValue = (typeof eligibilityStatusOptions)[number];
 
@@ -1916,7 +1916,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                           <div className="grid gap-6 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
                             <SectionCard
                               title="Voter registry import"
-                              description="Upload a CSV or XLSX file with member_unique_id, full_name, age, and email."
+                              description="Upload a CSV or XLSX file with member_unique_id, full_name, email, and phone."
                               action={isLoadingEligibility ? <Badge variant="outline">Refreshing...</Badge> : undefined}
                             >
                               <form className="space-y-4" onSubmit={handlePreviewEligibilityImport}>
@@ -1983,7 +1983,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                                               <p className="font-semibold">{row.fullName}</p>
                                             </div>
                                             <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">
-                                              {row.memberUniqueId} · {row.email} · Age {row.age}
+                                              {row.memberUniqueId} · {row.email} · {row.phone}
                                             </p>
                                           </div>
                                         ))
@@ -2055,7 +2055,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                               ) : (
                                 <div className="space-y-5">
                                   <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-                                    <MetricCard label="Eligible" value={eligibilityRoster.summary.importedEligibleCount} />
+                                    <MetricCard label="Imported" value={eligibilityRoster.summary.importedCount} />
                                     <MetricCard label="Invites sent" value={eligibilityRoster.summary.invitesSentCount} />
                                     <MetricCard label="Claimed" value={eligibilityRoster.summary.claimedCount} />
                                     <MetricCard label="Voted" value={eligibilityRoster.summary.votedCount} />
@@ -2087,13 +2087,13 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                                     </Select>
                                   </div>
 
-                                  {eligibilityRoster.eligibilities.length === 0 ? (
+                                  {eligibilityRoster.voters.length === 0 ? (
                                     <div className="rounded-[calc(var(--radius)-0.25rem)] border border-dashed border-[color:var(--border)] p-6 text-sm text-[color:var(--muted-foreground)]">
                                       No records match this filter yet.
                                     </div>
                                   ) : (
                                     <div className="grid gap-4">
-                                      {eligibilityRoster.eligibilities.map((eligibility) => (
+                                      {eligibilityRoster.voters.map((eligibility) => (
                                         <Card key={eligibility.id} className="border-white/70 bg-white/95">
                                           <CardContent className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
                                             <div className="space-y-2">
@@ -2103,7 +2103,7 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                                                 <Badge variant="outline">{eligibility.memberUniqueId}</Badge>
                                               </div>
                                               <p className="text-sm text-[color:var(--muted-foreground)]">
-                                                {eligibility.email} · Age {eligibility.age}
+                                                {eligibility.email} · {eligibility.phone}
                                               </p>
                                               <div className="flex flex-wrap gap-2">
                                                 {eligibility.importJob ? (
@@ -2762,11 +2762,23 @@ export function Workspace({ healthMessage, onLogout, onRefreshProfile, onThemeCh
                                 </div>
 
                                 <div className="flex flex-wrap gap-2">
-                                  <Badge variant="outline">
-                                    Actor: {log.actor.firstName} {log.actor.lastName}
-                                  </Badge>
-                                  <Badge variant="outline">{log.actor.email}</Badge>
-                                  <Badge variant="outline">Role: {toTitleCase(log.actor.role)}</Badge>
+                                  {log.actorUser ? (
+                                    <>
+                                      <Badge variant="outline">
+                                        Actor: {log.actorUser.firstName} {log.actorUser.lastName}
+                                      </Badge>
+                                      <Badge variant="outline">{log.actorUser.email}</Badge>
+                                      <Badge variant="outline">Role: {toTitleCase(log.actorUser.role)}</Badge>
+                                    </>
+                                  ) : log.actorElectionVoter ? (
+                                    <>
+                                      <Badge variant="outline">Actor: {log.actorElectionVoter.fullName}</Badge>
+                                      <Badge variant="outline">{log.actorElectionVoter.email}</Badge>
+                                      <Badge variant="outline">Election voter</Badge>
+                                    </>
+                                  ) : (
+                                    <Badge variant="outline">Actor unavailable</Badge>
+                                  )}
                                   {log.ipAddress ? <Badge variant="outline">IP: {log.ipAddress}</Badge> : null}
                                 </div>
 
