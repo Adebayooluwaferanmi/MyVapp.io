@@ -1,4 +1,4 @@
-import { ElectionEligibilityStatus, MembershipRole, UserRole } from "@prisma/client";
+import { ElectionStatus, MembershipRole, UserRole } from "@prisma/client";
 
 import { AppError } from "../../lib/app-error";
 import { prisma } from "../../lib/prisma";
@@ -41,13 +41,7 @@ async function buildUniquePublicElectionSlug(title: string): Promise<string> {
   let publicSlug = base;
   let sequence = 1;
 
-  while (
-    await prisma.election.findUnique({
-      where: {
-        publicSlug
-      }
-    })
-  ) {
+  while (await prisma.election.findUnique({ where: { publicSlug } })) {
     publicSlug = `${base}-${sequence}`;
     sequence += 1;
   }
@@ -70,6 +64,22 @@ async function ensureElectionInOrganization(organizationId: string, electionId: 
   return election;
 }
 
+function assertElectionStructureMutable(election: {
+  status: ElectionStatus;
+  lockAfterOpen: boolean;
+}) {
+  if (election.status === ElectionStatus.OPEN && election.lockAfterOpen) {
+    throw new AppError(
+      "Election structure is locked after opening. Offices and candidates cannot be changed.",
+      409
+    );
+  }
+
+  if (election.status === ElectionStatus.CLOSED || election.status === ElectionStatus.ARCHIVED) {
+    throw new AppError("Election structure cannot be modified after closing.", 409);
+  }
+}
+
 async function ensureOfficeInElection(organizationId: string, electionId: string, officeId: string) {
   const office = await prisma.office.findFirst({
     where: {
@@ -78,6 +88,14 @@ async function ensureOfficeInElection(organizationId: string, electionId: string
       election: {
         organizationId
       }
+    },
+    include: {
+      election: {
+        select: {
+          status: true,
+          lockAfterOpen: true
+        }
+      }
     }
   });
 
@@ -85,22 +103,21 @@ async function ensureOfficeInElection(organizationId: string, electionId: string
     throw new AppError("Office not found in this election.", 404);
   }
 
+  assertElectionStructureMutable(office.election);
+
   return office;
 }
 
 export async function listOrganizationElections(organizationId: string) {
   return prisma.election.findMany({
     where: { organizationId },
-    orderBy: [
-      {
-        createdAt: "desc"
-      }
-    ],
+    orderBy: [{ createdAt: "desc" }],
     include: {
       _count: {
         select: {
           offices: true,
-          ballots: true
+          ballots: true,
+          voters: true
         }
       }
     }
@@ -127,25 +144,19 @@ export async function listOrganizationElectionsForUser(input: {
   return prisma.election.findMany({
     where: {
       organizationId: input.organizationId,
-      eligibilities: {
+      accessAssignments: {
         some: {
-          claimedByUserId: input.userId,
-          status: {
-            in: [ElectionEligibilityStatus.CLAIMED, ElectionEligibilityStatus.VOTED]
-          }
+          userId: input.userId
         }
       }
     },
-    orderBy: [
-      {
-        createdAt: "desc"
-      }
-    ],
+    orderBy: [{ createdAt: "desc" }],
     include: {
       _count: {
         select: {
           offices: true,
-          ballots: true
+          ballots: true,
+          voters: true
         }
       }
     }
@@ -170,13 +181,17 @@ export async function createElection(
         slug,
         publicSlug,
         startsAt: input.startsAt ? new Date(input.startsAt) : null,
-        endsAt: input.endsAt ? new Date(input.endsAt) : null
+        endsAt: input.endsAt ? new Date(input.endsAt) : null,
+        resultsVisibilityMode: input.resultsVisibilityMode ?? "NONE_DURING_OPEN",
+        lockAfterOpen: input.lockAfterOpen ?? true,
+        invalidatePriorSessionOnNewLogin: input.invalidatePriorSessionOnNewLogin ?? false
       }
     });
 
     await recordAuditLog(
       {
         organizationId,
+        electionId: election.id,
         actorUserId,
         action: "election.created",
         targetType: "election",
@@ -187,7 +202,10 @@ export async function createElection(
           title: election.title,
           slug: election.slug,
           startsAt: election.startsAt?.toISOString() ?? null,
-          endsAt: election.endsAt?.toISOString() ?? null
+          endsAt: election.endsAt?.toISOString() ?? null,
+          resultsVisibilityMode: election.resultsVisibilityMode,
+          lockAfterOpen: election.lockAfterOpen,
+          invalidatePriorSessionOnNewLogin: election.invalidatePriorSessionOnNewLogin
         }
       },
       transaction
@@ -205,14 +223,7 @@ export async function getElectionDetails(organizationId: string, electionId: str
     },
     include: {
       offices: {
-        orderBy: [
-          {
-            sortOrder: "asc"
-          },
-          {
-            createdAt: "asc"
-          }
-        ],
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
         include: {
           candidates: {
             orderBy: {
@@ -223,7 +234,9 @@ export async function getElectionDetails(organizationId: string, electionId: str
       },
       _count: {
         select: {
-          ballots: true
+          ballots: true,
+          voters: true,
+          accessAssignments: true
         }
       }
     }
@@ -251,25 +264,15 @@ export async function getElectionDetailsForUser(input: {
     where: {
       id: input.electionId,
       organizationId: input.organizationId,
-      eligibilities: {
+      accessAssignments: {
         some: {
-          claimedByUserId: input.userId,
-          status: {
-            in: [ElectionEligibilityStatus.CLAIMED, ElectionEligibilityStatus.VOTED]
-          }
+          userId: input.userId
         }
       }
     },
     include: {
       offices: {
-        orderBy: [
-          {
-            sortOrder: "asc"
-          },
-          {
-            createdAt: "asc"
-          }
-        ],
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
         include: {
           candidates: {
             orderBy: {
@@ -280,7 +283,9 @@ export async function getElectionDetailsForUser(input: {
       },
       _count: {
         select: {
-          ballots: true
+          ballots: true,
+          voters: true,
+          accessAssignments: true
         }
       }
     }
@@ -293,6 +298,24 @@ export async function getElectionDetailsForUser(input: {
   return election;
 }
 
+function validateStatusTransition(current: ElectionStatus, next: ElectionStatus) {
+  if (current === next) {
+    return;
+  }
+
+  const allowedTransitions: Record<ElectionStatus, ElectionStatus[]> = {
+    [ElectionStatus.DRAFT]: [ElectionStatus.READY, ElectionStatus.ARCHIVED],
+    [ElectionStatus.READY]: [ElectionStatus.OPEN, ElectionStatus.ARCHIVED],
+    [ElectionStatus.OPEN]: [ElectionStatus.CLOSED],
+    [ElectionStatus.CLOSED]: [ElectionStatus.ARCHIVED],
+    [ElectionStatus.ARCHIVED]: []
+  };
+
+  if (!allowedTransitions[current].includes(next)) {
+    throw new AppError(`Invalid election status transition: ${current} -> ${next}.`, 409);
+  }
+}
+
 export async function updateElectionStatus(
   organizationId: string,
   electionId: string,
@@ -302,16 +325,30 @@ export async function updateElectionStatus(
 ) {
   return prisma.$transaction(async (transaction) => {
     const election = await ensureElectionInOrganization(organizationId, electionId);
+    validateStatusTransition(election.status, input.status);
+
+    const now = new Date();
     const updatedElection = await transaction.election.update({
       where: { id: electionId },
       data: {
-        status: input.status
+        status: input.status,
+        openedAt:
+          input.status === ElectionStatus.OPEN
+            ? election.openedAt ?? now
+            : input.status === ElectionStatus.DRAFT || input.status === ElectionStatus.READY
+              ? null
+              : election.openedAt,
+        closedAt:
+          input.status === ElectionStatus.CLOSED || input.status === ElectionStatus.ARCHIVED
+            ? election.closedAt ?? now
+            : null
       }
     });
 
     await recordAuditLog(
       {
         organizationId,
+        electionId,
         actorUserId,
         action: "election.status_updated",
         targetType: "election",
@@ -321,7 +358,9 @@ export async function updateElectionStatus(
         metadata: {
           title: updatedElection.title,
           previousStatus: election.status,
-          nextStatus: updatedElection.status
+          nextStatus: updatedElection.status,
+          openedAt: updatedElection.openedAt?.toISOString() ?? null,
+          closedAt: updatedElection.closedAt?.toISOString() ?? null
         }
       },
       transaction
@@ -336,14 +375,7 @@ export async function listElectionOffices(organizationId: string, electionId: st
 
   return prisma.office.findMany({
     where: { electionId },
-    orderBy: [
-      {
-        sortOrder: "asc"
-      },
-      {
-        createdAt: "asc"
-      }
-    ],
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     include: {
       _count: {
         select: {
@@ -362,7 +394,8 @@ export async function createOffice(
   actorUserId: string,
   auditContext?: AuditRequestContext
 ) {
-  await ensureElectionInOrganization(organizationId, electionId);
+  const election = await ensureElectionInOrganization(organizationId, electionId);
+  assertElectionStructureMutable(election);
 
   return prisma.$transaction(async (transaction) => {
     const office = await transaction.office.create({
@@ -378,6 +411,7 @@ export async function createOffice(
     await recordAuditLog(
       {
         organizationId,
+        electionId,
         actorUserId,
         action: "election.office_created",
         targetType: "office",
@@ -385,7 +419,6 @@ export async function createOffice(
         ipAddress: auditContext?.ipAddress,
         userAgent: auditContext?.userAgent,
         metadata: {
-          electionId,
           title: office.title,
           seats: office.seats,
           sortOrder: office.sortOrder
@@ -409,11 +442,7 @@ export async function listOfficeCandidates(
     where: {
       officeId
     },
-    orderBy: [
-      {
-        createdAt: "asc"
-      }
-    ]
+    orderBy: [{ createdAt: "asc" }]
   });
 }
 
@@ -440,6 +469,7 @@ export async function createCandidate(
     await recordAuditLog(
       {
         organizationId,
+        electionId,
         actorUserId,
         action: "election.candidate_created",
         targetType: "candidate",
@@ -447,7 +477,6 @@ export async function createCandidate(
         ipAddress: auditContext?.ipAddress,
         userAgent: auditContext?.userAgent,
         metadata: {
-          electionId,
           officeId,
           displayName: candidate.displayName
         }

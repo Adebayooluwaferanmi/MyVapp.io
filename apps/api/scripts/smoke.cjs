@@ -61,7 +61,8 @@ async function main() {
       title: electionTitle,
       description: "Smoke-test election",
       startsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      endsAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
+      endsAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+      resultsVisibilityMode: "PUBLIC_AFTER_CLOSE"
     });
 
   assertStatus(electionResponse, 201, "Create election");
@@ -106,13 +107,13 @@ async function main() {
 
   logStep("Previewing voter registry import");
   const previewResponse = await request(app)
-    .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/eligibility-imports/preview`)
+    .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/voter-imports/preview`)
     .set("Authorization", `Bearer ${managerToken}`)
     .send({
       filename: "smoke-voter-registry.csv",
       format: "CSV",
       contentBase64: Buffer.from(
-        `member_unique_id,full_name,age,email\n${voterMemberId},Smoke Voter,31,${voterEmail}\n`
+        `member_unique_id,full_name,email,phone\n${voterMemberId},Smoke Voter,${voterEmail},+2348000000000\n`
       ).toString("base64")
     });
 
@@ -121,7 +122,7 @@ async function main() {
 
   logStep("Committing voter registry import");
   const commitResponse = await request(app)
-    .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/eligibility-imports/${importId}/commit`)
+    .post(`/api/v1/organizations/${organizationId}/elections/${electionId}/voter-imports/${importId}/commit`)
     .set("Authorization", `Bearer ${managerToken}`)
     .send({
       note: "Smoke test import"
@@ -152,6 +153,16 @@ async function main() {
 
   assertStatus(claimResponse, 200, "Claim voter invite");
   const voterToken = claimResponse.body.token;
+
+  logStep("Moving election to READY");
+  const readyElectionResponse = await request(app)
+    .patch(`/api/v1/organizations/${organizationId}/elections/${electionId}/status`)
+    .set("Authorization", `Bearer ${managerToken}`)
+    .send({
+      status: "READY"
+    });
+
+  assertStatus(readyElectionResponse, 200, "Set election to READY");
 
   logStep("Opening the election");
   const openElectionResponse = await request(app)

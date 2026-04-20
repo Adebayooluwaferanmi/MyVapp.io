@@ -10,7 +10,7 @@ import {
 
 export async function getMyBallot(request: Request, response: Response): Promise<void> {
   const { organizationId, electionId } = electionParamsSchema.parse(request.params);
-  const ballotState = await getBallotForElection(organizationId, electionId, request.user!.sub);
+  const ballotState = await getBallotForElection(organizationId, electionId, request.user!);
 
   response.status(200).json(ballotState);
 }
@@ -21,7 +21,7 @@ export async function submitMyBallot(request: Request, response: Response): Prom
   const ballot = await submitBallot(
     organizationId,
     electionId,
-    request.user!.sub,
+    request.user!,
     payload,
     getRequestAuditContext(request)
   );
@@ -37,8 +37,7 @@ export async function getResults(request: Request, response: Response): Promise<
   const results = await getElectionResultsForViewer({
     organizationId,
     electionId,
-    userId: request.user!.sub,
-    platformRole: request.user?.role,
+    principal: request.user!,
     membershipRole: request.membership?.role
   });
 

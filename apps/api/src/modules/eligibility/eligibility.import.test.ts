@@ -23,7 +23,7 @@ describe("parseElectionEligibilityImport", () => {
       filename: "registry.csv",
       format: "CSV",
       contentBase64: encodeCsv(
-        "member_unique_id,full_name,age,email\nM-100,Ada Okoye,31, ADA@example.com \nM-101,Tunde Bello,29,tunde@example.com"
+        "member_unique_id,full_name,email,phone\nM-100,Ada Okoye, ADA@example.com ,+234 800 111 1111\nM-101,Tunde Bello,tunde@example.com,+234 800 222 2222"
       )
     });
 
@@ -32,15 +32,15 @@ describe("parseElectionEligibilityImport", () => {
         rowNumber: 2,
         memberUniqueId: "M-100",
         fullName: "Ada Okoye",
-        age: 31,
-        email: "ada@example.com"
+        email: "ada@example.com",
+        phone: "+234 800 111 1111"
       },
       {
         rowNumber: 3,
         memberUniqueId: "M-101",
         fullName: "Tunde Bello",
-        age: 29,
-        email: "tunde@example.com"
+        email: "tunde@example.com",
+        phone: "+234 800 222 2222"
       }
     ]);
     expect(result.rejectedRows).toEqual([]);
@@ -56,7 +56,7 @@ describe("parseElectionEligibilityImport", () => {
         filename: "registry.csv",
         format: "CSV",
         contentBase64: encodeCsv(
-          "member_unique_id,full_name,age,email\nM-100,Ada Okoye,31,ada@example.com\nM-100,Second Ada,30,second@example.com\nM-102,Tunde Bello,29,ada@example.com\nM-103,Existing Member,40,existing@example.com"
+          "member_unique_id,full_name,email,phone\nM-100,Ada Okoye,ada@example.com,+234 800 111 1111\nM-100,Second Ada,second@example.com,+234 800 111 1112\nM-102,Tunde Bello,ada@example.com,+234 800 111 1113\nM-103,Existing Member,existing@example.com,+234 800 111 1114"
         )
       },
       {
@@ -78,16 +78,16 @@ describe("parseElectionEligibilityImport", () => {
       filename: "registry.xlsx",
       format: "XLSX",
       contentBase64: encodeWorkbook([
-        ["Unique ID", "Full Name", "Age", "Email Address"],
-        ["M-200", "Ifeoma Nnaji", 28, "ifeoma@example.com"]
+        ["Unique ID", "Full Name", "Email Address", "Phone Number"],
+        ["M-200", "Ifeoma Nnaji", "ifeoma@example.com", "+234 800 333 3333"]
       ])
     });
 
     expect(result.acceptedRows[0]).toMatchObject({
       memberUniqueId: "M-200",
       fullName: "Ifeoma Nnaji",
-      age: 28,
-      email: "ifeoma@example.com"
+      email: "ifeoma@example.com",
+      phone: "+234 800 333 3333"
     });
   });
 

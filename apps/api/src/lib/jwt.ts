@@ -6,6 +6,11 @@ type AuthTokenPayload = {
   sub: string;
   email: string;
   role: string;
+  tokenType?: "user" | "election_voter";
+  electionId?: string;
+  electionVoterId?: string;
+  electionSessionId?: string;
+  electionSessionJti?: string;
 };
 
 export function signAuthToken(payload: AuthTokenPayload): string {

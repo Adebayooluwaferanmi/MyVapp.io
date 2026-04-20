@@ -1,4 +1,4 @@
-import { ElectionStatus } from "@prisma/client";
+import { ElectionResultsVisibility, ElectionStatus } from "@prisma/client";
 import { z } from "zod";
 
 export const organizationParamsSchema = z.object({
@@ -21,7 +21,10 @@ export const createElectionSchema = z
     title: z.string().trim().min(3).max(120),
     description: z.string().trim().max(1000).optional(),
     startsAt: z.string().datetime().optional(),
-    endsAt: z.string().datetime().optional()
+    endsAt: z.string().datetime().optional(),
+    resultsVisibilityMode: z.nativeEnum(ElectionResultsVisibility).optional(),
+    lockAfterOpen: z.boolean().optional(),
+    invalidatePriorSessionOnNewLogin: z.boolean().optional()
   })
   .refine(
     (data) => {

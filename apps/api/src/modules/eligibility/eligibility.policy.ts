@@ -1,8 +1,8 @@
-import { ElectionEligibilityStatus, ElectionStatus } from "@prisma/client";
+import { ElectionStatus, ElectionVoterStatus } from "@prisma/client";
 
 const SEVEN_DAYS_IN_MS = 7 * 24 * 60 * 60 * 1000;
 
-export type ElectionVisibilityViewer = "manager" | "voter" | "public";
+export type ElectionVisibilityViewer = "manager" | "chair" | "observer" | "public";
 
 export function resolveElectionInviteExpiry(sentAt: Date, electionEndsAt: Date | null): Date {
   const defaultExpiry = new Date(sentAt.getTime() + SEVEN_DAYS_IN_MS);
@@ -14,26 +14,8 @@ export function resolveElectionInviteExpiry(sentAt: Date, electionEndsAt: Date |
   return electionEndsAt.getTime() < defaultExpiry.getTime() ? electionEndsAt : defaultExpiry;
 }
 
-export function canViewElectionTurnout(
-  viewer: ElectionVisibilityViewer,
-  electionStatus: ElectionStatus
-): boolean {
-  return viewer === "manager" && electionStatus === ElectionStatus.OPEN;
-}
-
-export function canViewElectionResults(
-  viewer: ElectionVisibilityViewer,
-  electionStatus: ElectionStatus
-): boolean {
-  if (electionStatus !== ElectionStatus.CLOSED && electionStatus !== ElectionStatus.ARCHIVED) {
-    return false;
-  }
-
-  return viewer === "manager" || viewer === "voter" || viewer === "public";
-}
-
 export function canClaimElectionInvite(input: {
-  eligibilityStatus: ElectionEligibilityStatus;
+  eligibilityStatus: ElectionVoterStatus;
   inviteExpiresAt: Date;
   inviteUsedAt: Date | null;
   inviteRevokedAt: Date | null;
@@ -43,10 +25,10 @@ export function canClaimElectionInvite(input: {
   const now = input.now ?? new Date();
 
   if (
-    input.eligibilityStatus === ElectionEligibilityStatus.REVOKED ||
-    input.eligibilityStatus === ElectionEligibilityStatus.CLAIMED ||
-    input.eligibilityStatus === ElectionEligibilityStatus.VOTED ||
-    input.eligibilityStatus === ElectionEligibilityStatus.EXPIRED
+    input.eligibilityStatus === ElectionVoterStatus.REVOKED ||
+    input.eligibilityStatus === ElectionVoterStatus.CLAIMED ||
+    input.eligibilityStatus === ElectionVoterStatus.VOTED ||
+    input.eligibilityStatus === ElectionVoterStatus.EXPIRED
   ) {
     return false;
   }
@@ -67,14 +49,14 @@ export function canClaimElectionInvite(input: {
 }
 
 export function canUseElectionEligibilityForBallot(input: {
-  eligibilityStatus: ElectionEligibilityStatus;
+  eligibilityStatus: ElectionVoterStatus;
   electionStatus: ElectionStatus;
   electionEndsAt: Date | null;
   now?: Date;
 }): boolean {
   const now = input.now ?? new Date();
 
-  if (input.eligibilityStatus !== ElectionEligibilityStatus.CLAIMED) {
+  if (input.eligibilityStatus !== ElectionVoterStatus.CLAIMED) {
     return false;
   }
 

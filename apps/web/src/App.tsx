@@ -165,7 +165,7 @@ export default function App() {
     const nextSession = {
       token: payload.token,
       user: payload.user,
-      preferredView: preferredView ?? (payload.user.role === "VOTER" ? "voter" : "workspace")
+      preferredView: preferredView ?? (payload.user.role === "ELECTION_VOTER" ? "voter" : "workspace")
     };
 
     persistSession(nextSession);
@@ -192,7 +192,7 @@ export default function App() {
   }
 
   if (session) {
-    const isVoterOnly = session.user.role === "VOTER" || session.preferredView === "voter";
+    const isVoterOnly = session.user.role === "ELECTION_VOTER" || session.preferredView === "voter";
 
     return (
       <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,color-mix(in_srgb,var(--primary)_10%,transparent),transparent_35%),radial-gradient(circle_at_bottom_left,color-mix(in_srgb,var(--accent)_12%,transparent),transparent_40%),var(--background)] text-[color:var(--foreground)]">
@@ -205,7 +205,7 @@ export default function App() {
               onRefreshProfile={refreshProfile}
               onThemeChange={handleThemeChange}
               onSwitchToWorkspace={
-                session.user.role === "VOTER" ? undefined : () => setPreferredView("workspace")
+                session.user.role === "ELECTION_VOTER" ? undefined : () => setPreferredView("workspace")
               }
               session={session}
             />

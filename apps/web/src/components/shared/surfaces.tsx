@@ -131,7 +131,7 @@ export function StatusBadge({ status }: { status: string }) {
     return <Badge variant="destructive">{titleize(status)}</Badge>;
   }
 
-  if (["DRAFT", "SCHEDULED", "MEMBER", "VOTER"].includes(normalized)) {
+  if (["DRAFT", "SCHEDULED", "MEMBER", "ELECTION_VOTER"].includes(normalized)) {
     return <Badge variant="outline">{titleize(status)}</Badge>;
   }
 

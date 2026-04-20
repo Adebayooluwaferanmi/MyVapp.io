@@ -244,7 +244,7 @@ export function previewElectionEligibilityImport(
   payload: { filename: string; format: "CSV" | "XLSX"; contentBase64: string }
 ) {
   return apiRequest<ElectionEligibilityImportPreview>(
-    `/organizations/${organizationId}/elections/${electionId}/eligibility-imports/preview`,
+    `/organizations/${organizationId}/elections/${electionId}/voter-imports/preview`,
     {
       method: "POST",
       token,
@@ -261,7 +261,7 @@ export function commitElectionEligibilityImport(
   payload: { note?: string }
 ) {
   return apiRequest<ElectionEligibilityImportCommitResponse>(
-    `/organizations/${organizationId}/elections/${electionId}/eligibility-imports/${importId}/commit`,
+    `/organizations/${organizationId}/elections/${electionId}/voter-imports/${importId}/commit`,
     {
       method: "POST",
       token,
@@ -279,7 +279,7 @@ export function listElectionEligibility(
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
 
   return apiRequest<ElectionEligibilityRoster>(
-    `/organizations/${organizationId}/elections/${electionId}/eligibility${query}`,
+    `/organizations/${organizationId}/elections/${electionId}/voters${query}`,
     { token }
   );
 }
@@ -288,7 +288,7 @@ export function sendElectionInvitations(
   token: string,
   organizationId: string,
   electionId: string,
-  payload: { eligibilityIds?: string[] } = {}
+  payload: { electionVoterIds?: string[] } = {}
 ) {
   return apiRequest<ElectionInvitationSendResponse>(
     `/organizations/${organizationId}/elections/${electionId}/invitations/send`,
@@ -304,10 +304,10 @@ export function resendElectionInvitation(
   token: string,
   organizationId: string,
   electionId: string,
-  eligibilityId: string
+  electionVoterId: string
 ) {
   return apiRequest<ElectionInvitationSendResponse>(
-    `/organizations/${organizationId}/elections/${electionId}/invitations/${eligibilityId}/resend`,
+    `/organizations/${organizationId}/elections/${electionId}/invitations/${electionVoterId}/resend`,
     {
       method: "POST",
       token

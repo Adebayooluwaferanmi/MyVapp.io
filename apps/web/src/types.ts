@@ -67,13 +67,19 @@ export type AuditLog = {
   userAgent: string | null;
   metadata: Record<string, unknown> | null;
   createdAt: string;
-  actor: {
+  actorUser: {
     id: string;
     email: string;
     firstName: string;
     lastName: string;
     role: string;
-  };
+  } | null;
+  actorElectionVoter: {
+    id: string;
+    fullName: string;
+    email: string;
+    memberUniqueId: string;
+  } | null;
 };
 
 export type Candidate = {
@@ -122,7 +128,7 @@ export type ElectionDetail = ElectionSummary & {
 };
 
 export type ElectionEligibilityStatus =
-  | "PENDING"
+  | "IMPORTED"
   | "INVITED"
   | "CLAIMED"
   | "VOTED"
@@ -135,8 +141,8 @@ export type ElectionEligibilityImportPreview = {
     rowNumber: number;
     memberUniqueId: string;
     fullName: string;
-    age: number;
     email: string;
+    phone: string;
   }>;
   rejectedRows: Array<{
     rowNumber: number;
@@ -162,12 +168,12 @@ export type ElectionInvitationSendResponse = {
   sentCount: number;
   skippedCount: number;
   sent: Array<{
-    eligibilityId: string;
+    electionVoterId: string;
     email: string;
     expiresAt: string;
   }>;
   skipped: Array<{
-    eligibilityId: string;
+    electionVoterId: string;
     email: string;
     reason: string;
   }>;
@@ -177,8 +183,8 @@ export type ElectionEligibilityRecord = {
   id: string;
   memberUniqueId: string;
   fullName: string;
-  age: number;
   email: string;
+  phone: string;
   status: ElectionEligibilityStatus;
   claimedAt: string | null;
   votedAt: string | null;
@@ -189,12 +195,6 @@ export type ElectionEligibilityRecord = {
     sourceFormat: "CSV" | "XLSX";
     committedAt: string | null;
     createdAt: string;
-  };
-  claimedBy: null | {
-    id: string;
-    email: string;
-    firstName: string;
-    lastName: string;
   };
   latestInvite: null | {
     id: string;
@@ -222,7 +222,7 @@ export type ElectionEligibilityRoster = {
     };
   };
   summary: {
-    importedEligibleCount: number;
+    importedCount: number;
     invitesSentCount: number;
     claimedCount: number;
     votedCount: number;
@@ -231,7 +231,7 @@ export type ElectionEligibilityRoster = {
     usedInviteCount: number;
     ballotsSubmitted: number;
   };
-  eligibilities: ElectionEligibilityRecord[];
+  voters: ElectionEligibilityRecord[];
 };
 
 export type PublicElectionClaimContext = {
